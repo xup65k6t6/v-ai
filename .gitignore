@@ -174,3 +174,4 @@ cython_debug/
 .vscode/**/*
 data/**/*
 wandb/**/*/
+checkpoints/**/*

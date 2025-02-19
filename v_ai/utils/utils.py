@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import torch
 from PIL import Image
@@ -13,6 +14,7 @@ def custom_collate(batch):
     collated["player_annots"] = [b["player_annots"] for b in batch]
     return collated
 
+
 # <TODO> consider increase the batch size. For now, batch size > 1 is problematic
 # <TODO> consider using the following custom_collate function to pad frames to the same size
 # def custom_collate(batch):
@@ -26,7 +28,7 @@ def custom_collate(batch):
 #         pad_H = max_H - H
 #         pad_W = max_W - W
 #         # Pad on the right and bottom only.
-#         # Padding format: (pad_left, pad_right, pad_top, pad_bottom) 
+#         # Padding format: (pad_left, pad_right, pad_top, pad_bottom)
 #         padded = F.pad(frames, (0, pad_W, 0, pad_H), mode="constant", value=0) #preserving the original coordinate system for your annotations
 #         padded_frames.append(padded)
 #     collated = {}
@@ -36,6 +38,7 @@ def custom_collate(batch):
 #     collated["player_annots"] = [sample["player_annots"] for sample in batch]
 #     return collated
 
+
 def get_device():
     if torch.cuda.is_available():
         return torch.device("cuda")
@@ -43,11 +46,18 @@ def get_device():
         return torch.device("mps")
     else:
         return torch.device("cpu")
-    
+
+
+def get_checkpoint_dir():
+    checkpoint_dir = os.path.join(os.getcwd(), "checkpoints")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    return checkpoint_dir
+
+
 def display_temporal_tensor_frames(tensor_frames):
     """
     Converts each frame in a tensor to an image and displays it.
-    
+
     Parameters:
     tensor_frames (torch.Tensor): A tensor of shape [T, C, H, W]
     """
