@@ -1,15 +1,15 @@
 # v_ai/models/cnn.py
 
 import torch.nn as nn
-import torchvision.models as models
-
+from torchvision.models import resnet18, ResNet18_Weights
 
 class ResNetBackbone(nn.Module):
     def __init__(self, pretrained=True):
         super(ResNetBackbone, self).__init__()
-        # Load a pretrained ResNet-18
-        resnet = models.resnet18(pretrained=pretrained)
-        # Remove the final fully connected layer. The output is of shape [B, 512, 1, 1].
+        # Use the new weights argument.
+        weights = ResNet18_Weights.DEFAULT if pretrained else None
+        resnet = resnet18(weights=weights)
+        # Remove the final fully connected layer.
         self.features = nn.Sequential(*list(resnet.children())[:-1])
         self.output_dim = 512
 

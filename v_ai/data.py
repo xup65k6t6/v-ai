@@ -19,7 +19,7 @@ ACTION_MAPPING = {
 
 
 class GroupActivityDataset(Dataset):
-    def __init__(self, samples_base, video_ids, window_before=5, window_after=4, transform=None):
+    def __init__(self, samples_base, video_ids, window_before=5, window_after=4, transform=None, img_size = 1280):
         """
         Args:
             samples_base (str): Path to the "data/samples" directory.
@@ -36,6 +36,7 @@ class GroupActivityDataset(Dataset):
         self.window_after = window_after
         self.T = window_before + 1 + window_after  # total frames in window
         self.transform = transform
+        self.img_size = img_size
 
         # Build a list of sample dictionaries.
         # For each video directory, open its annotations.txt file and parse each line.
@@ -120,6 +121,7 @@ class GroupActivityDataset(Dataset):
         selected_files = all_files[start_idx:end_idx]
 
         frames = []
+        fixed_size = (self.img_size, self.img_size)
         for fname in selected_files:
             fpath = os.path.join(sample_dir, fname)
             img = cv2.imread(fpath)
@@ -132,6 +134,8 @@ class GroupActivityDataset(Dataset):
             else:
                 # Convert to tensor [C, H, W] and scale to float.
                 img = torch.from_numpy(img).permute(2, 0, 1).float()
+                # Resize to fixed_size using bilinear interpolation.
+                # img = F.interpolate(img.unsqueeze(0), size=fixed_size, mode='bilinear', align_corners=False).squeeze(0)
             frames.append(img)
         # Stack into a tensor of shape [T, C, H, W]
         frames = torch.stack(frames)

@@ -4,17 +4,21 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import wandb
 from torch.utils.data import DataLoader
-
+from tqdm import tqdm
 from v_ai.data import GROUP_ACTIVITY_MAPPING, GroupActivityDataset
 from v_ai.models.model import GroupActivityRecognitionModel
 from v_ai.transforms import get_val_transforms  # You may define a transform that does NOT resize if needed.
 from v_ai.utils.utils import custom_collate, get_device
 
+os.environ["WANDB_SILENT"] = "true"
+wandb.login(key=os.environ.get("WANDB_API_KEY"))
+
 def train_epoch(model, dataloader, criterion, optimizer, device):
     model.train()
     running_loss = 0.0
-    for i, batch in enumerate(dataloader):
+    for i, batch in enumerate(tqdm(dataloader, desc="Training")):
         frames = batch["frames"].to(device)      # [T, C, H, W]
         player_annots = batch["player_annots"]     # list of lists (variable length)
         labels = batch["group_label"].to(device)   # [B]
@@ -36,7 +40,7 @@ def validate_epoch(model, dataloader, criterion, device):
     model.eval()
     running_loss = 0.0
     with torch.no_grad():
-        for batch in dataloader:
+        for batch in tqdm(dataloader, desc="Validating"):
             frames = batch["frames"].to(device)
             player_annots = batch["player_annots"]
             labels = batch["group_label"].to(device)
@@ -52,7 +56,7 @@ def test_epoch(model, dataloader, criterion, device):
     correct = 0
     total = 0
     with torch.no_grad():
-        for batch in dataloader:
+        for batch in tqdm(dataloader, desc="Testing"):
             frames = batch["frames"].to(device)
             player_annots = batch["player_annots"]
             labels = batch["group_label"].to(device)
@@ -77,11 +81,11 @@ def main():
     # train_ids = [1, 3, 6, 7, 10, 13, 15, 16, 18, 22, 23, 31, 32, 36, 38, 39, 40, 41, 42, 48, 50, 52, 53, 54]
     train_ids = [7]
     # val_ids = [0, 2, 8, 12, 17, 19, 24, 26, 27, 28, 30, 33, 46, 49, 51]
-    val_ids = []
+    val_ids = [0]
     # test_ids = [4, 5, 9, 11, 14, 20, 21, 25, 29, 34, 35, 37, 43, 44, 45, 47]
 
     # Base directory for samples.
-    samples_base = os.path.join(os.getcwd(), "data", "videos_sample")
+    samples_base = os.path.join(os.getcwd(), "data", "videos")
     # You can optionally define a transform (e.g., for normalization) for the full frames.
     transform = None  # Or use get_val_transforms() if you wish to normalize without resizing.
 
@@ -113,15 +117,38 @@ def main():
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
+    # Initialize wandb.
+    wandb.init(project="volleyball_group_activity", config={
+        "epochs": num_epochs,
+        "batch_size": batch_size,
+        "learning_rate": learning_rate,
+        "person_hidden_dim": 256,
+        "group_hidden_dim": 256,
+        "bidirectional": False,
+    })
+    wandb.watch(model, log="all")  # Optional: track gradients and model parameters.
+
     # Training loop.
     for epoch in range(num_epochs):
         print(f"Epoch {epoch+1}/{num_epochs}")
         train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
         val_loss = validate_epoch(model, val_loader, criterion, device)
+        # Log metrics to wandb.
+        wandb.log({
+            "epoch": epoch + 1,
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+            "learning_rate": learning_rate
+        })
         print(f"Epoch {epoch+1}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}")
 
     # test_loss, test_accuracy = test_epoch(model, test_loader, criterion, device)
+    # wandb.log({
+    #     "test_loss": test_loss,
+    #     "test_accuracy": test_accuracy
+    # })
     # print(f"Test Loss = {test_loss:.4f}, Test Accuracy = {test_accuracy*100:.2f}%")
+    wandb.finish()
 
 if __name__ == '__main__':
     main()
