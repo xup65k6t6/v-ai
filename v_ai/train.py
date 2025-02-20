@@ -1,11 +1,13 @@
 # v_ai/train.py
 
+import argparse
 import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import wandb
 from torch.utils.data import DataLoader
+import yaml
 from v_ai.data import GROUP_ACTIVITY_MAPPING, GroupActivityDataset
 from v_ai.models.model import GroupActivityRecognitionModel
 from v_ai.transforms import (
@@ -15,7 +17,6 @@ from v_ai.utils.earlystopping import EarlyStopping
 from v_ai.utils.utils import custom_collate, get_checkpoint_dir, get_device
 
 os.environ["WANDB_SILENT"] = "true"
-wandb.login(key=os.environ.get("WANDB_API_KEY"))
 
 
 def train_epoch(model, dataloader, criterion, optimizer, device):
@@ -75,21 +76,40 @@ def test_epoch(model, dataloader, criterion, device):
 
 
 def main():
+    # Parse command-line argument for config file.
+    parser = argparse.ArgumentParser(description="Train Group Activity Recognition Model")
+    parser.add_argument("--config", type=str, default="config/config.yaml", help="Path to the YAML config file")
+    args = parser.parse_args()
+    
+    with open(args.config, "r") as f:
+        config = yaml.safe_load(f)
+        
+    # Extract parameters from config.
     # Hyperparameters.
-    num_epochs = 10
-    batch_size = 1  # For simplicity, we use batch size 1 due to variable-length player annotations.
-    learning_rate = 1e-4
-    patience = 5
-
+    num_epochs = config.get("num_epochs", 10)
+    batch_size = config.get("batch_size", 1)  # For simplicity, we use batch size 1 due to variable-length player annotations.
+    learning_rate = config.get("learning_rate", 1e-4)
+    patience = config.get("patience", 5)
     # dir setup
-    samples_base = os.path.join(os.getcwd(), "data", "videos")
-    checkpoint_dir = get_checkpoint_dir()
-    device = get_device()
+    samples_base = config.get("samples_base", os.path.join(os.getcwd(), "data", "videos"))
+    checkpoint_dir = config.get("checkpoint_dir", get_checkpoint_dir())
+    # Video splits 
+    train_ids = config.get("train_ids", [1, 3, 6, 7, 10, 13, 15, 16, 18, 22, 23, 31, 32, 36, 38, 39, 40, 41, 42, 48, 50, 52, 53, 54])
+    val_ids = config.get("val_ids", [0, 2, 8, 12, 17, 19, 24, 26, 27, 28, 30, 33, 46, 49, 51])
+    test_ids = config.get("test_ids", [4, 5, 9, 11, 14, 20, 21, 25, 29, 34, 35, 37, 43, 44, 45, 47])
+    num_workers = config.get("num_workers", 4)
+    wandb_project = config.get("wandb_project", "volleyball_group_activity")    
+    
 
-    # Video splits (as provided)
-    train_ids = [1,3,6,7,10,13,15,16,18,22,23,31,32,36,38,39,40,41,42,48,50,52,53,54,]
-    val_ids = [0, 2, 8, 12, 17, 19, 24, 26, 27, 28, 30, 33, 46, 49, 51]
-    test_ids = [4, 5, 9, 11, 14, 20, 21, 25, 29, 34, 35, 37, 43, 44, 45, 47]
+    # Model-related parameters.
+    person_hidden_dim = config.get("person_hidden_dim", 256)
+    group_hidden_dim = config.get("group_hidden_dim", 256)
+    person_lstm_layers = config.get("person_lstm_layers", 1)
+    group_lstm_layers = config.get("group_lstm_layers", 1)
+    bidirectional = config.get("bidirectional", False)
+    pretrained = config.get("pretrained", True)
+
+    device = get_device()
 
     # You can optionally define a transform (e.g., for normalization) for the full frames.
     transform = (
@@ -131,36 +151,36 @@ def main():
 
     # Model, criterion, optimizer, and scheduler
     num_group_classes = len(GROUP_ACTIVITY_MAPPING)
-
     model = GroupActivityRecognitionModel(
         num_classes=num_group_classes,
-        person_hidden_dim=256,
-        group_hidden_dim=256,
-        person_lstm_layers=1,
-        group_lstm_layers=1,
-        bidirectional=False,
-        pretrained=True,
+        person_hidden_dim=person_hidden_dim,
+        group_hidden_dim=group_hidden_dim,
+        person_lstm_layers=person_lstm_layers,
+        group_lstm_layers=group_lstm_layers,
+        bidirectional=bidirectional,
+        pretrained=pretrained,
     )
     model = model.to(device)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.1, patience=2, verbose=True
+        optimizer, mode="min", factor=0.1, patience=2
     )
     early_stopping = EarlyStopping(
         patience=patience, verbose=True, path=os.path.join(checkpoint_dir, "best.pt")
     )
 
     # Initialize wandb.
+    wandb.login(key=os.environ.get("WANDB_API_KEY"))
     wandb.init(
-        project="volleyball_group_activity",
+        project=wandb_project,
         config={
             "epochs": num_epochs,
             "batch_size": batch_size,
             "learning_rate": learning_rate,
-            "person_hidden_dim": 256,
-            "group_hidden_dim": 256,
+            "person_hidden_dim": person_hidden_dim,
+            "group_hidden_dim": group_hidden_dim,
             "bidirectional": False,
         },
     )
