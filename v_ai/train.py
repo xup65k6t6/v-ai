@@ -1,31 +1,38 @@
 # v_ai/train.py
 
+import argparse
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import wandb
 from torch.utils.data import DataLoader
+import yaml
+from v_ai.data import GROUP_ACTIVITY_MAPPING, GroupActivityDataset
+from v_ai.models.model import GroupActivityRecognitionModel
+from v_ai.transforms import (
+    get_val_transforms,
+)  # You may define a transform that does NOT resize if needed.
+from v_ai.utils.earlystopping import EarlyStopping
+from v_ai.utils.utils import custom_collate, get_checkpoint_dir, get_device
 
-from v_ai.data import VideoDataset
-from v_ai.models.model import VideoClassificationModel
-from v_ai.transforms import get_train_transforms, get_val_transforms
+os.environ["WANDB_SILENT"] = "true"
 
 
 def train_epoch(model, dataloader, criterion, optimizer, device):
     model.train()
     running_loss = 0.0
-    for i, (frames, labels) in enumerate(dataloader):
-        frames = frames.to(device)  # [B, T, C, H, W]
-        labels = labels.to(device)
-
+    for batch in dataloader:
+        frames = batch["frames"].to(device)  # [B, T, C, H, W]
+        # Move each tensor in the nested person_crops listy to device
+        person_crops = [[crop.to(device) for crop in crops] for crops in batch["person_crops"]]
+        labels = batch["group_label"].to(device)  # [B]
         optimizer.zero_grad()
-        outputs = model(frames)
-        loss = criterion(outputs, labels)
+        logits = model(frames, person_crops)
+        loss = criterion(logits, labels)
         loss.backward()
         optimizer.step()
-
         running_loss += loss.item()
-        if i % 10 == 0:
-            print(f"Train Batch {i}, Loss: {loss.item():.4f}")
     return running_loss / len(dataloader)
 
 
@@ -33,11 +40,12 @@ def validate_epoch(model, dataloader, criterion, device):
     model.eval()
     running_loss = 0.0
     with torch.no_grad():
-        for frames, labels in dataloader:
-            frames = frames.to(device)
-            labels = labels.to(device)
-            outputs = model(frames)
-            loss = criterion(outputs, labels)
+        for batch in dataloader:
+            frames = batch["frames"].to(device)
+            person_crops = [[crop.to(device) for crop in crops] for crops in batch["person_crops"]]
+            labels = batch["group_label"].to(device)
+            logits = model(frames, person_crops)
+            loss = criterion(logits, labels)
             running_loss += loss.item()
     return running_loss / len(dataloader)
 
@@ -48,107 +56,176 @@ def test_epoch(model, dataloader, criterion, device):
     correct = 0
     total = 0
     with torch.no_grad():
-        for frames, labels in dataloader:
-            frames = frames.to(device)
-            labels = labels.to(device)
-            outputs = model(frames)
-            loss = criterion(outputs, labels)
+        for batch in dataloader:
+            frames = batch["frames"].to(device)
+            person_crops = [[crop.to(device) for crop in crops] for crops in batch["person_crops"]]
+            labels = batch["group_label"].to(device)
+            logits = model(frames, person_crops)
+            loss = criterion(logits, labels)
             running_loss += loss.item()
-            # Get predictions
-            _, preds = torch.max(outputs, 1)
+            _, preds = torch.max(logits, 1)
             correct += (preds == labels).sum().item()
             total += labels.size(0)
     avg_loss = running_loss / len(dataloader)
     accuracy = correct / total if total > 0 else 0
     return avg_loss, accuracy
 
-
 def main():
-    # Configuration parameters
-    num_classes = 2             # Adjust for your use-case
-    cnn_backbone = 'resnet'       # or 'efficientnet'
-    lstm_hidden_dim = 256
-    lstm_layers = 1
-    bidirectional = False
-    pretrained = True
-    num_epochs = 10
-    batch_size = 4
-    learning_rate = 1e-4
-    sequence_length = 16
-    image_size = 224
+    # Parse command-line argument for config file.
+    parser = argparse.ArgumentParser(description="Train Group Activity Recognition Model")
+    parser.add_argument("--config", type=str, default="config/config.yaml", help="Path to the YAML config file")
+    args = parser.parse_args()
+    
+    with open(args.config, "r") as f:
+        config = yaml.safe_load(f)
+        
+    # Extract parameters from config.
+    # Hyperparameters.
+    num_epochs = config.get("num_epochs", 10)
+    batch_size = config.get("batch_size", 1)  # For simplicity, we use batch size 1 due to variable-length player annotations.
+    learning_rate = config.get("learning_rate", 1e-4)
+    patience = config.get("patience", 5)
+    # dir setup
+    samples_base = config.get("samples_base", os.path.join(os.getcwd(), "data", "videos"))
+    checkpoint_dir = config.get("checkpoint_dir", get_checkpoint_dir())
+    # Video splits 
+    train_ids = config.get("train_ids", [1, 3, 6, 7, 10, 13, 15, 16, 18, 22, 23, 31, 32, 36, 38, 39, 40, 41, 42, 48, 50, 52, 53, 54])
+    val_ids = config.get("val_ids", [0, 2, 8, 12, 17, 19, 24, 26, 27, 28, 30, 33, 46, 49, 51])
+    test_ids = config.get("test_ids", [4, 5, 9, 11, 14, 20, 21, 25, 29, 34, 35, 37, 43, 44, 45, 47])
+    num_workers = config.get("num_workers", 4)
+    wandb_project = config.get("wandb_project", "volleyball_group_activity")    
+    resnet_size = config.get("resnet_size", "18")
 
-    # Choose the type of input: either 'images' or 'video'
-    input_type = 'images'  # Change to 'video' if you want to load from video files
+    # Model-related parameters.
+    person_hidden_dim = config.get("person_hidden_dim", 256)
+    group_hidden_dim = config.get("group_hidden_dim", 256)
+    person_lstm_layers = config.get("person_lstm_layers", 1)
+    group_lstm_layers = config.get("group_lstm_layers", 1)
+    bidirectional = config.get("bidirectional", False)
+    pretrained = config.get("pretrained", True)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
 
-    # Transforms
-    train_transforms = get_train_transforms(image_size=image_size)
-    val_transforms = get_val_transforms(image_size=image_size)
+    # You can optionally define a transform (e.g., for normalization) for the full frames.
+    transform = (
+        None  # Or use get_val_transforms() if you wish to normalize without resizing.
+    )
 
-    # Create dummy data.
-    # For 'images': each sample is a dict with key 'frames' (list of image paths) and 'label'.
-    # For 'video': each sample is a dict with key 'video_path' and 'label'.
-    dummy_data_list = []
-    total_samples = 100
-    if input_type == 'images':
-        for i in range(total_samples):
-            sample = {
-                'frames': [f"/path/to/image_{i}_{j}.jpg" for j in range(sequence_length)],
-                'label': i % 2  # example binary label
-            }
-            dummy_data_list.append(sample)
-    elif input_type == 'video':
-        for i in range(total_samples):
-            sample = {
-                'video_path': f"/path/to/video_{i}.mp4",
-                'label': i % 2
-            }
-            dummy_data_list.append(sample)
+    # Create datasets.
+    train_dataset = GroupActivityDataset(
+        samples_base, video_ids=train_ids, transform=transform
+    )
+    val_dataset = GroupActivityDataset(
+        samples_base, video_ids=val_ids, transform=transform
+    )
+    test_dataset = GroupActivityDataset(
+        samples_base, video_ids=test_ids, transform=transform
+    )
 
-    # Split data into train, validation, and test sets (e.g., 70/15/15 split)
-    total = len(dummy_data_list)
-    train_split = int(0.7 * total)
-    val_split = int(0.85 * total)
-    train_data_list = dummy_data_list[:train_split]
-    val_data_list = dummy_data_list[train_split:val_split]
-    test_data_list = dummy_data_list[val_split:]
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        collate_fn=custom_collate,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        collate_fn=custom_collate,
+    )
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        collate_fn=custom_collate,
+    )
 
-    # Create datasets and dataloaders
-    train_dataset = VideoDataset(train_data_list, transform=train_transforms,
-                                 sequence_length=sequence_length, input_type=input_type)
-    val_dataset = VideoDataset(val_data_list, transform=val_transforms,
-                               sequence_length=sequence_length, input_type=input_type)
-    test_dataset = VideoDataset(test_data_list, transform=val_transforms,
-                                sequence_length=sequence_length, input_type=input_type)
-
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
-
-    # Initialize the model
-    model = VideoClassificationModel(cnn_backbone=cnn_backbone,
-                                     lstm_hidden_dim=lstm_hidden_dim,
-                                     lstm_layers=lstm_layers,
-                                     num_classes=num_classes,
-                                     bidirectional=bidirectional,
-                                     pretrained=pretrained)
+    # Model, criterion, optimizer, and scheduler
+    num_group_classes = len(GROUP_ACTIVITY_MAPPING)
+    model = GroupActivityRecognitionModel(
+        num_classes=num_group_classes,
+        resnet_size=resnet_size,
+        person_hidden_dim=person_hidden_dim,
+        group_hidden_dim=group_hidden_dim,
+        person_lstm_layers=person_lstm_layers,
+        group_lstm_layers=group_lstm_layers,
+        bidirectional=bidirectional,
+        pretrained=pretrained,
+    )
     model = model.to(device)
 
-    # Loss and optimizer
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.1, patience=2
+    )
+    early_stopping = EarlyStopping(
+        patience=patience, verbose=True, path=os.path.join(checkpoint_dir, "best.pt")
+    )
 
-    # Training loop
+    # Initialize wandb.
+    wandb.login(key=os.environ.get("WANDB_API_KEY"))
+    wandb.init(
+        project=wandb_project,
+        config={
+            "epochs": num_epochs,
+            "batch_size": batch_size,
+            "learning_rate": learning_rate,
+            "person_hidden_dim": person_hidden_dim,
+            "group_hidden_dim": group_hidden_dim,
+            "bidirectional": False,
+        },
+    )
+    wandb.watch(model, log="all")  # Optional: track gradients and model parameters.
+
+    # Training loop.
     for epoch in range(num_epochs):
-        print(f"Epoch {epoch + 1}/{num_epochs}")
+        print(f"Epoch {epoch+1}/{num_epochs}")
         train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
         val_loss = validate_epoch(model, val_loader, criterion, device)
-        print(f"Epoch {epoch + 1}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}")
+        # Log metrics to wandb.
+        wandb.log(
+            {
+                "train_loss": train_loss,
+                "val_loss": val_loss,
+                "lr": optimizer.param_groups[0]["lr"],
+            }
+        )
+        print(
+            f"Epoch {epoch+1}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}"
+        )
 
-    # Evaluate on the test set
-    test_loss, test_accuracy = test_epoch(model, test_loader, criterion, device)
-    print(f"Test Loss = {test_loss:.4f}, Test Accuracy = {test_accuracy * 100:.2f}%")
+        # Save last checkpoint every epoch.
+        torch.save(
+            {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
+                "val_loss": val_loss,
+            },
+            os.path.join(checkpoint_dir, "checkpoint_last.pt"),
+        )
 
-if __name__ == '__main__':
+        # Call early stopping.
+        early_stopping(val_loss, model, device)
+        if early_stopping.early_stop:
+            print("Early stopping triggered.")
+            break
+
+    model = early_stopping.load_best_model(model)
+    # test_loss, test_accuracy = test_epoch(model, test_loader, criterion, device)
+    # wandb.log({
+    #     "test_loss": test_loss,
+    #     "test_accuracy": test_accuracy
+    # })
+    # print(f"Test Loss = {test_loss:.4f}, Test Accuracy = {test_accuracy*100:.2f}%")
+    wandb.finish()
+
+
+if __name__ == "__main__":
     main()
