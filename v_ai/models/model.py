@@ -9,111 +9,108 @@ from v_ai.models.temporal import LSTMTemporalModel
 
 class GroupActivityRecognitionModel(nn.Module):
     def __init__(self, num_classes, resnet_size="18", person_hidden_dim=256, group_hidden_dim=256,
-                 person_lstm_layers=1, group_lstm_layers=1, bidirectional=False, pretrained=True):
-        """
-        Args:
-            num_classes (int): Number of group activity classes.
-            person_hidden_dim (int): Hidden dimension for the person-level LSTM.
-            group_hidden_dim (int): Hidden dimension for the group-level LSTM.
-            person_lstm_layers (int): Number of layers for the person-level LSTM.
-            group_lstm_layers (int): Number of layers for the group-level LSTM.
-            bidirectional (bool): Whether to use bidirectional LSTMs.
-            pretrained (bool): Whether to use pretrained CNN weights.
-        """
+                 person_lstm_layers=1, group_lstm_layers=1, bidirectional=True, pretrained=True,
+                 use_scene_context=False):
         super(GroupActivityRecognitionModel, self).__init__()
-        # CNN backbone to extract person features from cropped person images.
         self.person_cnn = ResNetBackbone(resnet_size=resnet_size, pretrained=pretrained)
         cnn_feature_dim = self.person_cnn.output_dim
 
-        # Person-level LSTM: processes the sequence of person–crop features.
-        self.person_lstm = LSTMTemporalModel(input_dim=cnn_feature_dim,
-                                             hidden_dim=person_hidden_dim,
-                                             num_layers=person_lstm_layers,
-                                             num_classes=person_hidden_dim,
-                                             bidirectional=bidirectional)
-        # Group-level LSTM: aggregates person-level features.
-        direction = 2 if bidirectional else 1
-        self.group_lstm = LSTMTemporalModel(input_dim=person_hidden_dim,
-                                            hidden_dim=group_hidden_dim,
-                                            num_layers=group_lstm_layers,
-                                            num_classes=group_hidden_dim,
-                                            bidirectional=bidirectional)
-        # Final classifier for group activity.
+        self.person_lstm = LSTMTemporalModel(
+            input_dim=cnn_feature_dim, hidden_dim=person_hidden_dim,
+            num_layers=person_lstm_layers, num_classes=cnn_feature_dim,
+            bidirectional=bidirectional
+        )
+
+        self.use_scene_context = use_scene_context
+        if use_scene_context:
+            self.scene_cnn = ResNetBackbone(resnet_size=resnet_size, pretrained=pretrained)
+            self.scene_lstm = LSTMTemporalModel(
+                input_dim=cnn_feature_dim, hidden_dim=group_hidden_dim,
+                num_layers=group_lstm_layers, num_classes=group_hidden_dim,
+                bidirectional=bidirectional
+            )
+            group_input_dim = cnn_feature_dim * 2  # Concat CNN and LSTM features
+        else:
+            group_input_dim = cnn_feature_dim * 2
+
+        self.group_lstm = LSTMTemporalModel(
+            input_dim=group_input_dim, hidden_dim=group_hidden_dim,
+            num_layers=group_lstm_layers, num_classes=group_hidden_dim,
+            bidirectional=bidirectional
+        )
+
         self.classifier = nn.Linear(group_hidden_dim, num_classes)
 
     def forward(self, frames, player_annots):
-        """
-        Args:
-            frames: Tensor of shape [B, T, C, H, W]
-            player_annots: List of lists, where each sublist contains dictionaries with "action" and "bbox" for each player.
-                           Each sublist has been padded to max_players.
-        Returns:
-            logits: Tensor of shape [B, num_classes]
-        """
         B, T, C, H, W = frames.shape
         device = frames.device
-        batch_size = B
-        max_players = len(player_annots[0])  # Assuming padded to max_players
 
-        # Initialize a list to hold person features for each sample in the batch
-        batch_person_features = []
-
-        for b in range(batch_size):
+        # Step 1: Process person-level features over the temporal window
+        batch_frame_features = []
+        for b in range(B):
             sample_frames = frames[b]  # [T, C, H, W]
-            sample_annots = player_annots[b]
-            person_features = []
-            x_coords = []
+            sample_annots = player_annots[b]  # List of dicts
+            person_seqs = []  # List of [T, cnn_feature_dim] for each person
             for annot in sample_annots:
-                bbox = annot["bbox"]  # (x, y, w, h)
-                if bbox == (0,0,0,0):  # Skip padded annotations
+                bbox = annot["bbox"]
+                if bbox == (0, 0, 0, 0):
                     continue
-                x, y, w, h = bbox
+                x, y, w, h = map(int, bbox)
+                x = max(0, x)
+                y = max(0, y)
+                w = min(w, W - x)
+                h = min(h, H - y)
+                if w <= 0 or h <= 0:
+                    continue
+                # Extract crops for all frames
                 crops = []
                 for t in range(T):
                     frame = sample_frames[t]  # [C, H, W]
-                    x_i = int(round(x))
-                    y_i = int(round(y))
-                    w_i = int(round(w))
-                    h_i = int(round(h))
-                    x_i = max(0, x_i)
-                    y_i = max(0, y_i)
-                    if x_i + w_i > W:
-                        w_i = W - x_i
-                    if y_i + h_i > H:
-                        h_i = H - y_i
-                    crop = frame[:, y_i:y_i+h_i, x_i:x_i+w_i]  # [C, h_i, w_i]
-                    crop = crop.unsqueeze(0)  # [1, C, h_i, w_i]
-                    crop = F.interpolate(crop, size=(224, 224), mode='bilinear', align_corners=False)
-                    crop = crop.squeeze(0)  # [C, 224, 224]
+                    crop = frame[:, y:y+h, x:x+w]  # [C, h, w]
+                    crop = F.interpolate(crop.unsqueeze(0), size=(224, 224), mode='bilinear', align_corners=False).squeeze(0)
+                    mean = torch.tensor([0.485, 0.456, 0.406], device=device).view(3, 1, 1)
+                    std = torch.tensor([0.229, 0.224, 0.225], device=device).view(3, 1, 1)
+                    crop = (crop / 255.0 - mean) / std
                     crops.append(crop)
-                person_seq = torch.stack(crops, dim=0)  # [T, C, 224, 224]
-                # Process each frame crop via the CNN
-                features = []
-                for t in range(person_seq.size(0)):
-                    frame_crop = person_seq[t].unsqueeze(0)  # [1, C, 224, 224]
-                    feat = self.person_cnn(frame_crop)  # [1, cnn_feature_dim]
-                    features.append(feat.squeeze(0))
-                features = torch.stack(features, dim=0)  # [T, cnn_feature_dim]
-                features = features.unsqueeze(0)  # [1, T, cnn_feature_dim]
-                person_feat = self.person_lstm(features)  # [1, person_hidden_dim]
-                person_feat = person_feat.squeeze(0)  # [person_hidden_dim]
-                person_features.append(person_feat)
-                x_coords.append(x)
-            if len(person_features) == 0:
-                group_feat = torch.zeros(self.group_lstm.fc.out_features, device=device)
-            else:
-                # Sort person features by x coordinate
-                sorted_indices = sorted(range(len(person_features)), key=lambda i: x_coords[i])
-                sorted_feats = [person_features[i] for i in sorted_indices]
-                persons_seq = torch.stack(sorted_feats, dim=0)  # [num_persons, person_hidden_dim]
-                persons_seq = persons_seq.unsqueeze(0)  # [1, num_persons, person_hidden_dim]
-                group_feat = self.group_lstm(persons_seq)  # [1, group_hidden_dim]
-                group_feat = group_feat.squeeze(0)  # [group_hidden_dim]
-            batch_person_features.append(group_feat)
+                crops = torch.stack(crops)  # [T, C, 224, 224]
+                cnn_feats = self.person_cnn(crops)  # [T, cnn_feature_dim]
+                person_seqs.append(cnn_feats)
 
-        # Stack group features for the batch
-        group_feats = torch.stack(batch_person_features, dim=0)  # [B, group_hidden_dim]
-        logits = self.classifier(group_feats)  # [B, num_classes]
+            # Apply person-level LSTM to each person's sequence
+            frame_features = []
+            for t in range(T):
+                cnn_feats_t = [seq[t] for seq in person_seqs]  # CNN features at frame t
+                if not cnn_feats_t:
+                    frame_feat = torch.zeros(2 * self.person_cnn.output_dim, device=device)
+                else:
+                    cnn_feats_t = torch.stack(cnn_feats_t)  # [num_persons, cnn_feature_dim]
+                    cnn_pooled = cnn_feats_t.max(dim=0)[0]  # [cnn_feature_dim]
+                    # LSTM over all persons' sequences
+                    persons_seq = torch.stack(person_seqs, dim=0)  # [num_persons, T, cnn_feature_dim]
+                    lstm_feats = self.person_lstm(persons_seq.transpose(0, 1))  # [T, num_persons, cnn_feature_dim] -> [T, cnn_feature_dim]
+                    frame_feat = torch.cat([cnn_pooled, lstm_feats[t]], dim=0)  # [2 * cnn_feature_dim]
+                frame_features.append(frame_feat)
+            batch_frame_features.append(torch.stack(frame_features))  # [T, 2 * cnn_feature_dim]
+
+        # Step 2: Optionally process scene context
+        if self.use_scene_context:
+            scene_features = []
+            for t in range(T):
+                frame = frames[:, t]  # [B, C, H, W]
+                scene_feat = self.scene_cnn(frame)  # [B, cnn_feature_dim]
+                scene_features.append(scene_feat)
+            scene_seq = torch.stack(scene_features, dim=1)  # [B, T, cnn_feature_dim]
+            scene_output = self.scene_lstm(scene_seq)  # [B, group_hidden_dim]
+            person_seq = torch.stack(batch_frame_features)  # [B, T, 2 * cnn_feature_dim]
+            group_input = torch.cat([person_seq, scene_output.unsqueeze(1).expand(-1, T, -1)], dim=2)
+        else:
+            group_input = torch.stack(batch_frame_features)  # [B, T, 2 * cnn_feature_dim]
+
+        # Step 3: Group-level LSTM
+        group_output = self.group_lstm(group_input)  # [B, group_hidden_dim]
+
+        # Step 4: Classification
+        logits = self.classifier(group_output)  # [B, num_classes]
         return logits
 
 class VideoClassificationModel(nn.Module):
