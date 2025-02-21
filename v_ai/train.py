@@ -126,21 +126,21 @@ def main():
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=4,
+        num_workers=num_workers,
         collate_fn=custom_collate,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=4,
+        num_workers=num_workers,
         collate_fn=custom_collate,
     )
     test_loader = DataLoader(
         test_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=4,
+        num_workers=num_workers,
         collate_fn=custom_collate,
     )
 
