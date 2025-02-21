@@ -24,10 +24,11 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
     running_loss = 0.0
     for batch in dataloader:
         frames = batch["frames"].to(device)  # [B, T, C, H, W]
-        player_annots = batch["player_annots"]  # list of lists
+        # Move each tensor in the nested person_crops listy to device
+        person_crops = [[crop.to(device) for crop in crops] for crops in batch["person_crops"]]
         labels = batch["group_label"].to(device)  # [B]
         optimizer.zero_grad()
-        logits = model(frames, player_annots)  # [B, num_classes]
+        logits = model(frames, person_crops)
         loss = criterion(logits, labels)
         loss.backward()
         optimizer.step()
@@ -41,9 +42,9 @@ def validate_epoch(model, dataloader, criterion, device):
     with torch.no_grad():
         for batch in dataloader:
             frames = batch["frames"].to(device)
-            player_annots = batch["player_annots"]
+            person_crops = [[crop.to(device) for crop in crops] for crops in batch["person_crops"]]
             labels = batch["group_label"].to(device)
-            logits = model(frames, player_annots)
+            logits = model(frames, person_crops)
             loss = criterion(logits, labels)
             running_loss += loss.item()
     return running_loss / len(dataloader)
@@ -56,19 +57,18 @@ def test_epoch(model, dataloader, criterion, device):
     total = 0
     with torch.no_grad():
         for batch in dataloader:
-            frames = batch["frames"].to(device)  # [B, T, C, H, W]
-            player_annots = batch["player_annots"]  # List of lists, padded to max_players
-            labels = batch["group_label"].to(device)  # [B]
-            logits = model(frames, player_annots)  # [B, num_classes]
+            frames = batch["frames"].to(device)
+            person_crops = [[crop.to(device) for crop in crops] for crops in batch["person_crops"]]
+            labels = batch["group_label"].to(device)
+            logits = model(frames, person_crops)
             loss = criterion(logits, labels)
             running_loss += loss.item()
-            _, preds = torch.max(logits, 1)  # [B]
+            _, preds = torch.max(logits, 1)
             correct += (preds == labels).sum().item()
             total += labels.size(0)
     avg_loss = running_loss / len(dataloader)
     accuracy = correct / total if total > 0 else 0
     return avg_loss, accuracy
-
 
 def main():
     # Parse command-line argument for config file.

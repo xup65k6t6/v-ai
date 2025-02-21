@@ -41,45 +41,31 @@ class GroupActivityRecognitionModel(nn.Module):
 
         self.classifier = nn.Linear(group_hidden_dim, num_classes)
 
-    def forward(self, frames, player_annots):
+    def forward(self, frames, person_crops):
+        """
+        Args:
+            frames: Tensor [B, T, C, H, W]
+            person_crops: List of length B, each containing list of [T, C, 224, 224] tensors
+        Returns:
+            logits: Tensor [B, num_classes]
+        """
         B, T, C, H, W = frames.shape
         device = frames.device
 
-        # Step 1: Process person-level features over the temporal window
+        # Step 1: Process person-level features
         batch_frame_features = []
         for b in range(B):
-            sample_frames = frames[b]  # [T, C, H, W]
-            sample_annots = player_annots[b]  # List of dicts
-            person_seqs = []  # List of [T, cnn_feature_dim] for each person
-            for annot in sample_annots:
-                bbox = annot["bbox"]
-                if bbox == (0, 0, 0, 0):
+            sample_crops = person_crops[b]  # List of [T, C, 224, 224]
+            person_seqs = []
+            for crops in sample_crops:
+                if crops.sum() == 0:  # Skip padded crops
                     continue
-                x, y, w, h = map(int, bbox)
-                x = max(0, x)
-                y = max(0, y)
-                w = min(w, W - x)
-                h = min(h, H - y)
-                if w <= 0 or h <= 0:
-                    continue
-                # Extract crops for all frames
-                crops = []
-                for t in range(T):
-                    frame = sample_frames[t]  # [C, H, W]
-                    crop = frame[:, y:y+h, x:x+w]  # [C, h, w]
-                    crop = F.interpolate(crop.unsqueeze(0), size=(224, 224), mode='bilinear', align_corners=False).squeeze(0)
-                    mean = torch.tensor([0.485, 0.456, 0.406], device=device).view(3, 1, 1)
-                    std = torch.tensor([0.229, 0.224, 0.225], device=device).view(3, 1, 1)
-                    crop = (crop / 255.0 - mean) / std
-                    crops.append(crop)
-                crops = torch.stack(crops)  # [T, C, 224, 224]
                 cnn_feats = self.person_cnn(crops)  # [T, cnn_feature_dim]
                 person_seqs.append(cnn_feats)
 
-            # Apply person-level LSTM to each person's sequence
             frame_features = []
             for t in range(T):
-                cnn_feats_t = [seq[t] for seq in person_seqs]  # CNN features at frame t
+                cnn_feats_t = [seq[t] for seq in person_seqs if seq.sum() != 0]
                 if not cnn_feats_t:
                     frame_feat = torch.zeros(2 * self.person_cnn.output_dim, device=device)
                 else:

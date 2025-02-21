@@ -4,6 +4,7 @@ import os
 import cv2
 import torch
 from torch.utils.data import Dataset
+import torch.nn.functional as F
 import numpy as np
 
 # Define mappings for group activity and individual action classes.
@@ -90,38 +91,21 @@ class GroupActivityDataset(Dataset):
         return len(self.samples)
 
     def _load_frame_window(self, sample_dir, target_filename):
-        """
-        Loads a temporal window from the sample directory.
-        Args:
-            sample_dir (str): Directory path for this annotated sample.
-            target_filename (str): The target frame image filename (with extension) as given in annotation.
-        Returns:
-            frames: A list of T images (as numpy arrays). Each image is read with cv2.imread and converted to RGB.
-        """
-        # List all image files in the sample directory.
         all_files = [f for f in os.listdir(sample_dir) if f.lower().endswith((".jpg", ".png"))]
         if not all_files:
             raise ValueError(f"No image files found in {sample_dir}")
-        all_files.sort()  # sort by filename (assumed sequential)
+        all_files.sort()
 
-        # Find the index of the target frame.
         try:
             target_idx = all_files.index(target_filename)
         except ValueError:
-            # If not found, default to middle of list.
             target_idx = len(all_files) // 2
 
-        # Determine start and end indices for the temporal window.
         start_idx = max(0, target_idx - self.window_before)
-        end_idx = start_idx + self.T
-        # If end exceeds, adjust start.
-        if end_idx > len(all_files):
-            end_idx = len(all_files)
-            start_idx = max(0, end_idx - self.T)
+        end_idx = min(len(all_files), start_idx + self.T)
         selected_files = all_files[start_idx:end_idx]
 
         frames = []
-        fixed_size = (self.img_size, self.img_size)
         for fname in selected_files:
             fpath = os.path.join(sample_dir, fname)
             img = cv2.imread(fpath)
@@ -129,48 +113,62 @@ class GroupActivityDataset(Dataset):
                 raise ValueError(f"Failed to load image: {fpath}")
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             if self.transform:
-                augmented = self.transform(image=img)
-                img = augmented["image"]
+                img = self.transform(image=img)["image"]
             else:
-                # Convert to tensor [C, H, W] and scale to float.
-                img = torch.from_numpy(img).permute(2, 0, 1).float()
-                # Resize to fixed_size using bilinear interpolation.
-                # img = F.interpolate(img.unsqueeze(0), size=fixed_size, mode='bilinear', align_corners=False).squeeze(0)
+                img = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0  # [C, H, W], scale to [0, 1]
             frames.append(img)
-        # Stack into a tensor of shape [T, C, H, W]
-        frames = torch.stack(frames)
+        frames = torch.stack(frames)  # [T, C, H, W]
         return frames
 
     def __getitem__(self, idx):
         sample = self.samples[idx]
         video_id = sample["video_id"]
         frame_id = sample["frame_id"]
-        # In the annotation, frame_id may not include extension – try common ones.
         possible_names = [frame_id + ext for ext in [".jpg", ".png"]]
-        # The sample directory is at: samples/<video_id>/<frame_id>
         sample_dir = os.path.join(self.samples_base, video_id, frame_id)
-        # For safety, if the directory does not exist, try using frame_id with extension removed.
         if not os.path.isdir(sample_dir):
-            # Try removing extension if accidentally included.
             sample_dir = os.path.join(self.samples_base, video_id, os.path.splitext(frame_id)[0])
             if not os.path.isdir(sample_dir):
                 raise ValueError(f"Sample directory not found for video {video_id} frame {frame_id}")
-        # Now, load the temporal window. Find the target frame filename from the files in sample_dir.
+
         all_files = [f for f in os.listdir(sample_dir) if f.lower().endswith((".jpg", ".png"))]
         all_files.sort()
-        target_filename = None
-        for name in possible_names:
-            if name in all_files:
-                target_filename = name
-                break
-        if target_filename is None:
-            # If not found, take the middle image.
-            target_filename = all_files[len(all_files)//2]
-        frames = self._load_frame_window(sample_dir, target_filename)
-        # Return a dictionary with full–frame window, player annotations, and group label.
+        target_filename = next((name for name in possible_names if name in all_files), all_files[len(all_files)//2])
+        frames = self._load_frame_window(sample_dir, target_filename)  # [T, C, H, W]
+
+        # Precompute person crops
+        player_annots = sample["player_annots"]
+        person_crops = []
+        _, _, H, W = frames.shape
+        for annot in player_annots:
+            bbox = annot["bbox"]
+            if bbox == (0, 0, 0, 0):
+                person_crops.append(torch.zeros(self.T, 3, 224, 224))  # Padded crop
+                continue
+            x, y, w, h = map(int, bbox)
+            x = max(0, x)
+            y = max(0, y)
+            w = min(w, W - x)
+            h = min(h, H - y)
+            if w <= 0 or h <= 0:
+                person_crops.append(torch.zeros(self.T, 3, 224, 224))
+                continue
+            crops = []
+            for t in range(self.T):
+                frame = frames[t]  # [C, H, W]
+                crop = frame[:, y:y+h, x:x+w]  # [C, h, w]
+                crop = F.interpolate(crop.unsqueeze(0), size=(224, 224), mode='bilinear', align_corners=False).squeeze(0)
+                # Normalize for ResNet
+                mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+                std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+                crop = (crop - mean) / std  # Assuming frames are now [0, 1]
+                crops.append(crop)
+            person_crops.append(torch.stack(crops))  # [T, C, 224, 224]
+
         return {
-            "frames": frames,  # [T, C, H, W]
-            "player_annots": sample["player_annots"],  # list of dicts, each with "action" and "bbox"
+            "frames": frames,              # [T, C, H, W]
+            "person_crops": person_crops,  # List of [T, C, 224, 224] tensors
+            "player_annots": player_annots,
             "group_label": torch.tensor(sample["group_label"]).long()
         }
 
