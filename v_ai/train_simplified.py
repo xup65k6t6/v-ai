@@ -90,6 +90,8 @@ def main():
     num_workers = config.get("num_workers", 4)
     wandb_project = config.get("wandb_project", "volleyball_group_activity")    
     resnet_size = config.get("resnet_size", "18")
+    window_before = config.get("window_before", 5)
+    window_after = config.get("window_after", 4)
 
     # Model-related parameters.
     hidden_dim = config.get("hidden_dim", 256)
@@ -106,13 +108,13 @@ def main():
 
     # Create datasets using SimplifiedGroupActivityDataset
     train_dataset = SimplifiedGroupActivityDataset(
-        samples_base, video_ids=train_ids, transform=transform
+        samples_base, video_ids=train_ids, transform=transform, window_before=window_before, window_after=window_after
     )
     val_dataset = SimplifiedGroupActivityDataset(
-        samples_base, video_ids=val_ids, transform=transform
+        samples_base, video_ids=val_ids, transform=transform, window_before=window_before, window_after=window_after
     )
     test_dataset = SimplifiedGroupActivityDataset(
-        samples_base, video_ids=test_ids, transform=transform
+        samples_base, video_ids=test_ids, transform=transform, window_before=window_before, window_after=window_after
     )
 
     # Standard DataLoader without custom_collate
@@ -165,6 +167,8 @@ def main():
             "learning_rate": learning_rate,
             "hidden_dim": hidden_dim,
             "bidirectional": False,
+            "window_before": window_before,
+            "window_after": window_after,
         },
     )
     wandb.watch(model, log="all")  # Optional: track gradients and model parameters.
