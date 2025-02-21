@@ -5,14 +5,14 @@ from PIL import Image
 import torch.nn.functional as F
 
 
-def custom_collate(batch):
-    collated = {}
-    # Stack frames and group_label as tensors
-    collated["frames"] = torch.stack([b["frames"] for b in batch])
-    collated["group_label"] = torch.stack([b["group_label"] for b in batch])
-    # Leave player_annots as a list of (un-collated) values.
-    collated["player_annots"] = [b["player_annots"] for b in batch]
-    return collated
+# def custom_collate(batch):
+#     collated = {}
+#     # Stack frames and group_label as tensors
+#     collated["frames"] = torch.stack([b["frames"] for b in batch])
+#     collated["group_label"] = torch.stack([b["group_label"] for b in batch])
+#     # Leave player_annots as a list of (un-collated) values.
+#     collated["player_annots"] = [b["player_annots"] for b in batch]
+#     return collated
 
 
 # <TODO> consider increase the batch size. For now, batch size > 1 is problematic
@@ -37,6 +37,27 @@ def custom_collate(batch):
 #     # Leave player_annots as list of lists.
 #     collated["player_annots"] = [sample["player_annots"] for sample in batch]
 #     return collated
+
+def custom_collate(batch):
+    """
+    Custom collate function to handle variable number of players.
+    Pads player_annots to the maximum number of players in the batch.
+    """
+    max_players = max(len(sample["player_annots"]) for sample in batch)
+    padded_player_annots = []
+    for sample in batch:
+        player_annots = sample["player_annots"]
+        num_players = len(player_annots)
+        # Pad with dummy annotations (e.g., bbox=(0,0,0,0), action=0)
+        padded_annots = player_annots + [{"action": 0, "bbox": (0,0,0,0)}] * (max_players - num_players)
+        padded_player_annots.append(padded_annots)
+    
+    collated = {
+        "frames": torch.stack([sample["frames"] for sample in batch]),
+        "player_annots": padded_player_annots,  # List of lists, each with max_players annotations
+        "group_label": torch.stack([sample["group_label"] for sample in batch])
+    }
+    return collated
 
 
 def get_device():

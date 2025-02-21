@@ -22,21 +22,16 @@ os.environ["WANDB_SILENT"] = "true"
 def train_epoch(model, dataloader, criterion, optimizer, device):
     model.train()
     running_loss = 0.0
-    for i, batch in enumerate(dataloader):
-        frames = batch["frames"].to(device)  # [T, C, H, W]
-        player_annots = batch["player_annots"]  # list of lists (variable length)
+    for batch in dataloader:
+        frames = batch["frames"].to(device)  # [B, T, C, H, W]
+        player_annots = batch["player_annots"]  # list of lists
         labels = batch["group_label"].to(device)  # [B]
-
-        # For simplicity, process one sample at a time if batch size > 1 is problematic
         optimizer.zero_grad()
-        # Here, assume batch size = 1 for clarity (or loop over batch)
-        logits = model(frames.squeeze(0), player_annots[0])
-        loss = criterion(logits.unsqueeze(0), labels)
+        logits = model(frames, player_annots)  # [B, num_classes]
+        loss = criterion(logits, labels)
         loss.backward()
         optimizer.step()
         running_loss += loss.item()
-        if i % 10 == 0:
-            print(f"Train Batch {i}, Loss: {loss.item():.4f}")
     return running_loss / len(dataloader)
 
 
@@ -48,8 +43,8 @@ def validate_epoch(model, dataloader, criterion, device):
             frames = batch["frames"].to(device)
             player_annots = batch["player_annots"]
             labels = batch["group_label"].to(device)
-            logits = model(frames.squeeze(0), player_annots[0])
-            loss = criterion(logits.unsqueeze(0), labels)
+            logits = model(frames, player_annots)
+            loss = criterion(logits, labels)
             running_loss += loss.item()
     return running_loss / len(dataloader)
 
@@ -61,13 +56,13 @@ def test_epoch(model, dataloader, criterion, device):
     total = 0
     with torch.no_grad():
         for batch in dataloader:
-            frames = batch["frames"].to(device)
-            player_annots = batch["player_annots"]
-            labels = batch["group_label"].to(device)
-            logits = model(frames.squeeze(0), player_annots[0])
-            loss = criterion(logits.unsqueeze(0), labels)
+            frames = batch["frames"].to(device)  # [B, T, C, H, W]
+            player_annots = batch["player_annots"]  # List of lists, padded to max_players
+            labels = batch["group_label"].to(device)  # [B]
+            logits = model(frames, player_annots)  # [B, num_classes]
+            loss = criterion(logits, labels)
             running_loss += loss.item()
-            _, preds = torch.max(logits.unsqueeze(0), 1)
+            _, preds = torch.max(logits, 1)  # [B]
             correct += (preds == labels).sum().item()
             total += labels.size(0)
     avg_loss = running_loss / len(dataloader)
@@ -99,7 +94,7 @@ def main():
     test_ids = config.get("test_ids", [4, 5, 9, 11, 14, 20, 21, 25, 29, 34, 35, 37, 43, 44, 45, 47])
     num_workers = config.get("num_workers", 4)
     wandb_project = config.get("wandb_project", "volleyball_group_activity")    
-    
+    resnet_size = config.get("resnet_size", "18")
 
     # Model-related parameters.
     person_hidden_dim = config.get("person_hidden_dim", 256)
@@ -153,6 +148,7 @@ def main():
     num_group_classes = len(GROUP_ACTIVITY_MAPPING)
     model = GroupActivityRecognitionModel(
         num_classes=num_group_classes,
+        resnet_size=resnet_size,
         person_hidden_dim=person_hidden_dim,
         group_hidden_dim=group_hidden_dim,
         person_lstm_layers=person_lstm_layers,
@@ -221,13 +217,13 @@ def main():
             print("Early stopping triggered.")
             break
 
+    model = early_stopping.load_best_model(model)
     # test_loss, test_accuracy = test_epoch(model, test_loader, criterion, device)
     # wandb.log({
     #     "test_loss": test_loss,
     #     "test_accuracy": test_accuracy
     # })
     # print(f"Test Loss = {test_loss:.4f}, Test Accuracy = {test_accuracy*100:.2f}%")
-    model = early_stopping.load_best_model(model)
     wandb.finish()
 
 
