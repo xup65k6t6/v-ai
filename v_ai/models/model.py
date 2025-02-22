@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from v_ai.models.cnn import ResNetBackbone
 from v_ai.models.temporal import LSTMTemporalModel
-
+from torchvision.models.video import r3d_18, R3D_18_Weights
 
 class GroupActivityRecognitionModel(nn.Module):
     def __init__(self, num_classes, resnet_size="18", person_hidden_dim=256, group_hidden_dim=256,
@@ -136,4 +136,23 @@ class VideoClassificationModel(nn.Module):
         
         # Classification
         logits = self.classifier(lstm_output)  # [B, num_classes]
+        return logits
+
+
+class Video3DClassificationModel(nn.Module):
+    def __init__(self, num_classes, pretrained=True):
+        super(Video3DClassificationModel, self).__init__()
+        # Load pretrained ResNet3D-18
+        weights = R3D_18_Weights.DEFAULT if pretrained else None
+        self.backbone = r3d_18(weights=weights)
+        self.backbone.fc = nn.Linear(self.backbone.fc.in_features, num_classes)  # Modify final layer
+
+    def forward(self, x):
+        """
+        Args:
+            x: Tensor [B, C, T, H, W]
+        Returns:
+            logits: Tensor [B, num_classes]
+        """
+        logits = self.backbone(x)  # 3D CNN processes spatio-temporal data directly
         return logits

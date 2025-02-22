@@ -176,17 +176,8 @@ class GroupActivityDataset(Dataset):
 # New SimplifiedGroupActivityDataset for full-frame-only processing
 class SimplifiedGroupActivityDataset(Dataset):
     def __init__(self, samples_base, video_ids, window_before=5, window_after=4, transform=None, img_size=1280):
-        """
-        Args:
-            samples_base (str): Path to the "data/samples" directory.
-            video_ids (list): List of video IDs (folder names as strings or ints) to include.
-            window_before (int): Number of frames to take before the target frame.
-            window_after (int): Number of frames to take after the target frame.
-            transform: Optional transform to apply to each loaded full-frame image.
-            img_size (int): Target image size (not used if transform handles resizing).
-        """
         self.samples_base = samples_base
-        self.video_ids = [str(v) for v in video_ids]  # ensure strings
+        self.video_ids = [str(v) for v in video_ids]
         self.window_before = window_before
         self.window_after = window_after
         self.T = window_before + 1 + window_after  # total frames in window
@@ -245,9 +236,9 @@ class SimplifiedGroupActivityDataset(Dataset):
                 raise ValueError(f"Failed to load image: {fpath}")
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             if self.transform:
-                img = self.transform(image=img)["image"]
+                img = self.transform(image=img)["image"]  # [C, H, W], normalized
             else:
-                img = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0  # [C, H, W], scale to [0, 1]
+                img = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0  # [C, H, W], [0, 1]
             frames.append(img)
         frames = torch.stack(frames)  # [T, C, H, W]
         return frames
@@ -267,11 +258,6 @@ class SimplifiedGroupActivityDataset(Dataset):
         all_files.sort()
         target_filename = next((name for name in possible_names if name in all_files), all_files[len(all_files)//2])
         frames = self._load_frame_window(sample_dir, target_filename)  # [T, C, H, W]
-        
-        # Normalize frames for ResNet
-        mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
-        std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
-        frames = (frames - mean) / std
         
         return {
             "frames": frames,              # [T, C, H, W]
