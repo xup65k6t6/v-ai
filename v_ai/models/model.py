@@ -150,9 +150,10 @@ class Video3DClassificationModel(nn.Module):
     def forward(self, x):
         """
         Args:
-            x: Tensor [B, C, T, H, W]
+            x: Tensor [B, T, C, H, W]
         Returns:
             logits: Tensor [B, num_classes]
         """
-        logits = self.backbone(x)  # 3D CNN processes spatio-temporal data directly
-        return logits
+        # Input x: [B, T, C, H, W] from DataLoader
+        x = x.permute(0, 2, 1, 3, 4)  # Convert to [B, C, T, H, W]
+        return self.backbone(x)        # Output: [B, num_classes]
