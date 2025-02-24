@@ -11,7 +11,9 @@ import yaml
 from v_ai.data import GROUP_ACTIVITY_MAPPING, GroupActivityDataset, SimplifiedGroupActivityDataset
 from v_ai.models.model import GroupActivityRecognitionModel, VideoClassificationModel, Video3DClassificationModel
 from v_ai.transforms import (
+    get_3dcnn_transform,
     get_val_transforms,
+    resize_only,
 )  # You may define a transform that does NOT resize if needed.
 from v_ai.utils.earlystopping import EarlyStopping
 from v_ai.utils.utils import custom_collate, get_checkpoint_dir, get_device
@@ -23,18 +25,15 @@ os.environ["WANDB_SILENT"] = "true"
 def train_epoch(model, dataloader, criterion, optimizer, device):
     model.train()
     running_loss = 0.0
-    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
-        with record_function("train_epoch"):
-            for batch in dataloader:
-                frames = batch["frames"].to(device).permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
-                labels = batch["group_label"].to(device)
-                optimizer.zero_grad()
-                logits = model(frames)
-                loss = criterion(logits, labels)
-                loss.backward()
-                optimizer.step()
-                running_loss += loss.item()
-    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+    for batch in dataloader:
+        frames = batch["frames"].to(device).permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
+        labels = batch["group_label"].to(device)
+        optimizer.zero_grad()
+        logits = model(frames)
+        loss = criterion(logits, labels)
+        loss.backward()
+        optimizer.step()
+        running_loss += loss.item()
     return running_loss / len(dataloader)
 
 
@@ -105,7 +104,8 @@ def main():
 
     device = get_device()
 
-    transform = get_val_transforms(image_size=224)  # Required for pretrained ResNet3D
+    transform = resize_only(image_size=320)  # Required for pretrained ResNet3D
+    # transform = get_3dcnn_transform(image_size=112)  # Required for pretrained ResNet3D
 
     # Create datasets using SimplifiedGroupActivityDataset
     train_dataset = SimplifiedGroupActivityDataset(
