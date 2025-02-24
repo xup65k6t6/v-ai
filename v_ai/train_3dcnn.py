@@ -90,6 +90,7 @@ def main():
     train_ids = config.get("train_ids", [1, 3, 6, 7, 10, 13, 15, 16, 18, 22, 23, 31, 32, 36, 38, 39, 40, 41, 42, 48, 50, 52, 53, 54])
     val_ids = config.get("val_ids", [0, 2, 8, 12, 17, 19, 24, 26, 27, 28, 30, 33, 46, 49, 51])
     test_ids = config.get("test_ids", [4, 5, 9, 11, 14, 20, 21, 25, 29, 34, 35, 37, 43, 44, 45, 47])
+    image_size = config.get("image_size", 640)
     num_workers = config.get("num_workers", 4)
     wandb_project = config.get("wandb_project", "volleyball_group_activity")    
     resnet_size = config.get("resnet_size", "18")
@@ -104,7 +105,7 @@ def main():
 
     device = get_device()
 
-    transform = resize_only(image_size=320)  # Required for pretrained ResNet3D
+    transform = resize_only(image_size=image_size)  # Required for pretrained ResNet3D
     # transform = get_3dcnn_transform(image_size=112)  # Required for pretrained ResNet3D
 
     # Create datasets using SimplifiedGroupActivityDataset
