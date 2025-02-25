@@ -11,7 +11,7 @@ num_workers: 4
 wandb_project: "volleyball_group_activity"
 window_before: 7
 window_after: 8
-img_size: 320
+image_size: 320
 
 # Model configuration
 model_type: "3d_cnn"  # Options: "3d_cnn", "2d_lstm", etc.

@@ -236,7 +236,7 @@ class SimplifiedGroupActivityDataset(Dataset):
                 raise ValueError(f"Failed to load image: {fpath}")
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             if self.transform:
-                img = self.transform(image=img)["image"]  # [C, H, W], normalized
+                img = self.transform(image=img)["image"].float()  # [C, H, W], normalized
             else:
                 img = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0  # [C, H, W], [0, 1]
             frames.append(img)

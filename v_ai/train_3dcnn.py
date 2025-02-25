@@ -93,6 +93,7 @@ def main():
     image_size = config.get("image_size", 640)
     num_workers = config.get("num_workers", 4)
     wandb_project = config.get("wandb_project", "volleyball_group_activity")    
+    wandb_run_name = config.get("wandb_run_name")
     resnet_size = config.get("resnet_size", "18")
     window_before = config.get("window_before", 5)
     window_after = config.get("window_after", 4)
@@ -106,6 +107,7 @@ def main():
     device = get_device()
 
     transform = resize_only(image_size=image_size)  # Required for pretrained ResNet3D
+    # transform = None
     # transform = get_3dcnn_transform(image_size=112)  # Required for pretrained ResNet3D
 
     # Create datasets using SimplifiedGroupActivityDataset
@@ -158,6 +160,7 @@ def main():
     wandb.login(key=os.environ.get("WANDB_API_KEY"))
     wandb.init(
         project=wandb_project,
+        name = wandb_run_name,
         config={
             "epochs": num_epochs,
             "batch_size": batch_size,

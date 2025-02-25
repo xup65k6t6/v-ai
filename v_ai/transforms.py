@@ -39,9 +39,9 @@ def get_3dcnn_transform(image_size=112):
 def resize_only(image_size=640):
     return A.Compose([
         A.Resize(image_size, image_size),
-        # A.Normalize(
-        #     mean=[0.43216, 0.394666, 0.37645],      # Kinetics mean
-        #     std=[0.22803, 0.22145, 0.216989]        # Kinetics std
-        # ),
+        A.Normalize(
+            mean=[0.43216, 0.394666, 0.37645],      # Kinetics mean
+            std=[0.22803, 0.22145, 0.216989]        # Kinetics std
+        ),
         ToTensorV2()
     ])
