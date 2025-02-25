@@ -25,7 +25,9 @@ os.environ["WANDB_SILENT"] = "true"
 def train_epoch(model, dataloader, criterion, optimizer, device):
     model.train()
     running_loss = 0.0
-    for batch in dataloader:
+    total_batches = len(dataloader)
+    for i, batch in enumerate(dataloader):
+        print(f"Batch {i+1}/{total_batches}")
         frames = batch["frames"].to(device).permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
         labels = batch["group_label"].to(device)
         optimizer.zero_grad()

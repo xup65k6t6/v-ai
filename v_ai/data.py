@@ -240,6 +240,11 @@ class SimplifiedGroupActivityDataset(Dataset):
             else:
                 img = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0  # [C, H, W], [0, 1]
             frames.append(img)
+        #padding
+        if len(frames) < self.T:
+            last_frame = frames[-1]
+            padding = [last_frame.clone() for _ in range(self.T - len(frames))]
+            frames.extend(padding)
         frames = torch.stack(frames)  # [T, C, H, W]
         return frames
 

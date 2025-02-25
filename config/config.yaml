@@ -9,8 +9,8 @@ learning_rate: 0.0001
 patience: 5
 num_workers: 4
 wandb_project: "volleyball_group_activity"
-window_before: 7
-window_after: 8
+window_before: 3
+window_after: 4
 image_size: 320
 
 # Model configuration
