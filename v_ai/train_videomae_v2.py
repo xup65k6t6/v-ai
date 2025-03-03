@@ -8,7 +8,8 @@ import torch.nn as nn
 import torch.optim as optim
 import wandb
 from torch.utils.data import DataLoader
-from v_ai.dataset_videomae import VideoMAEDataset
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from v_ai.dataset_videomae import VideoMAE_V2_Dataset, GROUP_ACTIVITY_MAPPING
 from v_ai.models.videomae_v2 import VideoMAEV2ClassificationModel
 from v_ai.transforms import resize_only
 from v_ai.utils.earlystopping import EarlyStopping
@@ -38,16 +39,31 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
 def validate_epoch(model, dataloader, criterion, device):
     model.eval()
     running_loss = 0.0
+    all_labels = []
+    all_preds = []
     with torch.no_grad():
         for batch in dataloader:
             frames = batch["frames"].to(device)
-            if frames.dim() == 4:
-                frames = frames.unsqueeze(0)
             labels = batch["group_label"].to(device)
             logits = model(frames)
             loss = criterion(logits, labels)
             running_loss += loss.item()
-    return running_loss / len(dataloader)
+            preds = torch.argmax(logits, dim=1)
+            all_labels.extend(labels.cpu().numpy())
+            all_preds.extend(preds.cpu().numpy())
+    # Calculate metrics
+    accuracy = accuracy_score(all_labels, all_preds)
+    precision = precision_score(all_labels, all_preds, average="macro")
+    recall = recall_score(all_labels, all_preds, average="macro")
+    f1 = f1_score(all_labels, all_preds, average="macro")
+    avg_loss = running_loss / len(dataloader)
+    metrics = {
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+    }
+    return avg_loss, metrics
 
 def test_epoch(model, dataloader, criterion, device):
     model.eval()
@@ -96,11 +112,12 @@ def main():
     num_workers = config.get("num_workers", 4)
     wandb_project = config.get("wandb_project", "volleyball_group_activity")
     wandb_run_name = config.get("wandb_run_name", "videomae_v2_run")
+    window_before = config.get("window_before", 3)
+    window_after = config.get("window_after", 4)
     
     # Model-specific parameters.
     num_frames = config.get("num_frames", 8)
-    # Use GROUP_ACTIVITY_MAPPING from your config file (or count from v_ai/data.py)
-    num_classes = len(config.get("GROUP_ACTIVITY_MAPPING",{}))
+    num_classes = len(GROUP_ACTIVITY_MAPPING)
     pretrained = config.get("pretrained", True)
     videomae_v2_model_name = config.get("videomae_v2_model_name", "OpenGVLab/VideoMAEv2-Base")
     
@@ -110,15 +127,31 @@ def main():
     transform = resize_only(image_size=image_size)
     
     # Create datasets for training/validation (data is a folder of frames)
-    train_dataset = VideoMAEDataset(
-        samples_base, video_ids=train_ids, transform=transform, num_frames=num_frames
+    train_dataset = VideoMAE_V2_Dataset(
+        samples_base = samples_base,
+        video_ids = train_ids,
+        window_before = window_before,
+        window_after = window_after,
+        transform = transform,
+        num_frames = num_frames
     )
-    val_dataset = VideoMAEDataset(
-        samples_base, video_ids=val_ids, transform=transform, num_frames=num_frames
+    val_dataset = VideoMAE_V2_Dataset(
+        samples_base = samples_base,
+        video_ids = val_ids,
+        window_before = window_before,
+        window_after = window_after,
+        transform = transform,
+        num_frames = num_frames        
     )
     # For testing, if your test_ids refer to video files, the same dataset class handles it.
-    test_dataset = VideoMAEDataset(
-        samples_base, video_ids=test_ids, transform=transform, num_frames=num_frames
+    test_dataset = VideoMAE_V2_Dataset(
+        samples_base = samples_base,
+        video_ids = test_ids,
+        window_before = window_before,
+        window_after = window_after,
+        transform = transform,
+        num_frames = num_frames
+            
     )
     
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
@@ -146,14 +179,23 @@ def main():
     for epoch in range(num_epochs):
         print(f"Epoch {epoch+1}/{num_epochs}")
         train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss = validate_epoch(model, val_loader, criterion, device)
+        val_loss, val_metrics = validate_epoch(model, val_loader, criterion, device)
         wandb.log({
-            "epoch": epoch+1,
+            "epoch": epoch + 1,
             "train_loss": train_loss,
             "val_loss": val_loss,
+            "val_accuracy": val_metrics["accuracy"],
+            "val_precision": val_metrics["precision"],
+            "val_recall": val_metrics["recall"],
+            "val_f1": val_metrics["f1"],
             "lr": optimizer.param_groups[0]["lr"],
         })
-        print(f"Epoch {epoch+1}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}")
+        print(
+            f"Epoch {epoch+1}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}, "
+            f"Acc = {val_metrics['accuracy']:.4f}, Prec = {val_metrics['precision']:.4f}, "
+            f"Recall = {val_metrics['recall']:.4f}, F1 = {val_metrics['f1']:.4f}"
+        )
+
         
         torch.save({
             "epoch": epoch,
