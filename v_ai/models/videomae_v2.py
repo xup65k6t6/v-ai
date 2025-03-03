@@ -6,10 +6,9 @@ from transformers import AutoConfig, AutoModel, VideoMAEForVideoClassification, 
 from v_ai.data import GROUP_ACTIVITY_MAPPING
 
 class VideoMAEV2ClassificationModel(nn.Module):
-    def __init__(self, num_classes, num_frames=8, pretrained=True, model_name="OpenGVLab/VideoMAEv2-Base"):
+    def __init__(self, num_frames=8, image_size= 224,pretrained=True, model_name="OpenGVLab/VideoMAEv2-Base"):
         """
         Args:
-            num_classes (int): Number of group activity classes.
             num_frames (int): Number of frames per clip.
             pretrained (bool): Whether to load pretrained weights.
             model_name (str): Hugging Face model identifier.
@@ -18,7 +17,7 @@ class VideoMAEV2ClassificationModel(nn.Module):
         self.num_frames = num_frames
         # Load configuration and adjust for our input.
         # config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
-        config = VideoMAEConfig.from_pretrained(model_name, trust_remote_code=True, image_size = 224, num_frames = 8, )
+        config = VideoMAEConfig.from_pretrained(model_name, trust_remote_code=True, image_size = image_size, num_frames = 8, )
         config.num_frames = num_frames  # Adjust temporal input; the model will interpolate positional embeddings.
         config.num_labels = len(GROUP_ACTIVITY_MAPPING)
         config.label2id = GROUP_ACTIVITY_MAPPING

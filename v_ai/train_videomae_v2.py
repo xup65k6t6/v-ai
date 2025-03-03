@@ -159,7 +159,7 @@ def main():
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
     
     # Initialize VideoMAE V2 model.
-    model = VideoMAEV2ClassificationModel(num_classes=num_classes, num_frames=num_frames,
+    model = VideoMAEV2ClassificationModel(num_frames=num_frames, image_size = image_size,
                                            pretrained=pretrained, model_name=videomae_v2_model_name)
     model = model.to(device)
     
