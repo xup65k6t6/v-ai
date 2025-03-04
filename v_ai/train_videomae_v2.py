@@ -7,7 +7,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import wandb
-from torch.utils.data import DataLoader
+import torch.distributed as dist
+from torch.utils.data import DataLoader, DistributedSampler
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from v_ai.dataset_videomae import VideoMAE_V2_Dataset, GROUP_ACTIVITY_MAPPING
 from v_ai.models.videomae_v2 import VideoMAEV2ClassificationModel
@@ -121,7 +122,14 @@ def main():
     pretrained = config.get("pretrained", True)
     videomae_v2_model_name = config.get("videomae_v2_model_name", "OpenGVLab/VideoMAEv2-Base")
     
-    device = get_device()
+    # device = get_device()
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        backend = 'nccl' if torch.cuda.is_available() else 'gloo'
+        dist.init_process_group(backend=backend)
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        device = torch.device("cuda", local_rank) if torch.cuda.is_available() else torch.device("cpu")
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Define transform: using your resize_only transform.
     transform = resize_only(image_size=image_size)
@@ -135,6 +143,7 @@ def main():
         transform = transform,
         num_frames = num_frames
     )
+    train_sampler = DistributedSampler(train_dataset) if dist.is_initialized() else None
     val_dataset = VideoMAE_V2_Dataset(
         samples_base = samples_base,
         video_ids = val_ids,
@@ -143,6 +152,7 @@ def main():
         transform = transform,
         num_frames = num_frames        
     )
+    val_sampler = DistributedSampler(val_dataset) if dist.is_initialized() else None
     # For testing, if your test_ids refer to video files, the same dataset class handles it.
     test_dataset = VideoMAE_V2_Dataset(
         samples_base = samples_base,
@@ -151,17 +161,19 @@ def main():
         window_after = window_after,
         transform = transform,
         num_frames = num_frames
-            
     )
+    test_sampler = DistributedSampler(test_dataset) if dist.is_initialized() else None
     
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=(train_sampler is None), num_workers=num_workers, sampler=train_sampler)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle= False , num_workers=num_workers, sampler=val_sampler)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, sampler=test_sampler)
     
     # Initialize VideoMAE V2 model.
     model = VideoMAEV2ClassificationModel(num_frames=num_frames, image_size = image_size,
                                            pretrained=pretrained, model_name=videomae_v2_model_name)
     model = model.to(device)
+    if dist.is_initialized():
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
     
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.05)
@@ -214,6 +226,8 @@ def main():
     # Optionally, run test_epoch if desired.
     # test_loss, test_acc = test_epoch(model, test_loader, criterion, device)
     # print(f"Test Loss = {test_loss:.4f}, Test Accuracy = {test_acc*100:.2f}%")
+    if dist.is_initialized():
+        dist.destroy_process_group()
     wandb.finish()
 
 if __name__ == "__main__":
