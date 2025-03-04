@@ -17,7 +17,7 @@ class VideoMAEV2ClassificationModel(nn.Module):
         self.num_frames = num_frames
         # Load configuration and adjust for our input.
         # config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
-        config = VideoMAEConfig.from_pretrained(model_name, trust_remote_code=True, image_size = image_size, num_frames = 8, )
+        config = VideoMAEConfig.from_pretrained(model_name, image_size = image_size, num_frames = 8, )
         config.num_frames = num_frames  # Adjust temporal input; the model will interpolate positional embeddings.
         config.num_labels = len(GROUP_ACTIVITY_MAPPING)
         config.label2id = GROUP_ACTIVITY_MAPPING
@@ -25,7 +25,7 @@ class VideoMAEV2ClassificationModel(nn.Module):
 
         if pretrained:
             # self.videomae = AutoModel.from_pretrained(model_name, config=config, trust_remote_code=True)
-            self.videomae = VideoMAEForVideoClassification.from_pretrained(model_name, config=config, trust_remote_code=True, ignore_mismatched_sizes=True)
+            self.videomae = VideoMAEForVideoClassification.from_pretrained(model_name, config=config, ignore_mismatched_sizes=True)
         else:
             self.videomae = AutoModel.from_config(config, trust_remote_code=True)
 

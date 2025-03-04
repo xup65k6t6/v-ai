@@ -53,9 +53,9 @@ def validate_epoch(model, dataloader, criterion, device):
             all_preds.extend(preds.cpu().numpy())
     # Calculate metrics
     accuracy = accuracy_score(all_labels, all_preds)
-    precision = precision_score(all_labels, all_preds, average="macro")
-    recall = recall_score(all_labels, all_preds, average="macro")
-    f1 = f1_score(all_labels, all_preds, average="macro")
+    precision = precision_score(all_labels, all_preds, average="macro", zero_division=0)
+    recall = recall_score(all_labels, all_preds, average="macro", zero_division=0)
+    f1 = f1_score(all_labels, all_preds, average="macro", zero_division=0)
     avg_loss = running_loss / len(dataloader)
     metrics = {
         "accuracy": accuracy,
