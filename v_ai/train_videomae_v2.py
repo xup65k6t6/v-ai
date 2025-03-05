@@ -131,6 +131,12 @@ def main():
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
+    # Determine rank (only rank 0 should log to WandB)
+    if dist.is_initialized():
+        rank = dist.get_rank()
+    else:
+        rank = 0
+    
     # Define transform: using your resize_only transform.
     transform = resize_only(image_size=image_size)
     
@@ -181,41 +187,42 @@ def main():
     early_stopping = EarlyStopping(patience=patience, verbose=True, path=os.path.join(checkpoint_dir, "videomae_v2_best.pt"))
     
     wandb.login(key=os.environ.get("WANDB_API_KEY"))
-    wandb.init(
-        project=wandb_project,
-        name=wandb_run_name,
-        config=config
-    )
-    wandb.watch(model, log="all")
+    # Initialize WandB only on rank 0, disable logging on other ranks.
+    if rank == 0:
+        wandb.init(project=wandb_project, name=wandb_run_name, config=config)
+        wandb.watch(model, log="all")
+    # else:
+    #     wandb.init(project=wandb_project, name=wandb_run_name, config=config, mode="disabled")
+    
     
     for epoch in range(num_epochs):
         print(f"Epoch {epoch+1}/{num_epochs}")
         train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
         val_loss, val_metrics = validate_epoch(model, val_loader, criterion, device)
-        wandb.log({
-            "epoch": epoch + 1,
-            "train_loss": train_loss,
-            "val_loss": val_loss,
-            "val_accuracy": val_metrics["accuracy"],
-            "val_precision": val_metrics["precision"],
-            "val_recall": val_metrics["recall"],
-            "val_f1": val_metrics["f1"],
-            "lr": optimizer.param_groups[0]["lr"],
-        })
-        print(
-            f"Epoch {epoch+1}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}, "
-            f"Acc = {val_metrics['accuracy']:.4f}, Prec = {val_metrics['precision']:.4f}, "
-            f"Recall = {val_metrics['recall']:.4f}, F1 = {val_metrics['f1']:.4f}"
-        )
-
+        if rank == 0:
+            wandb.log({
+                "epoch": epoch + 1,
+                "train_loss": train_loss,
+                "val_loss": val_loss,
+                "val_accuracy": val_metrics["accuracy"],
+                "val_precision": val_metrics["precision"],
+                "val_recall": val_metrics["recall"],
+                "val_f1": val_metrics["f1"],
+                "lr": optimizer.param_groups[0]["lr"],
+            })
+            print(
+                f"Epoch {epoch+1}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}, "
+                f"Acc = {val_metrics['accuracy']:.4f}, Prec = {val_metrics['precision']:.4f}, "
+                f"Recall = {val_metrics['recall']:.4f}, F1 = {val_metrics['f1']:.4f}"
+            )
         
-        torch.save({
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "scheduler_state_dict": scheduler.state_dict(),
-            "val_loss": val_loss,
-        }, os.path.join(checkpoint_dir, "checkpoint_last.pt"))
+            torch.save({
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
+                "val_loss": val_loss,
+            }, os.path.join(checkpoint_dir, "checkpoint_last.pt"))
         
         early_stopping(val_loss, model, device)
         if early_stopping.early_stop:
@@ -228,7 +235,9 @@ def main():
     # print(f"Test Loss = {test_loss:.4f}, Test Accuracy = {test_acc*100:.2f}%")
     if dist.is_initialized():
         dist.destroy_process_group()
-    wandb.finish()
+    
+    if rank == 0:
+        wandb.finish()
 
 if __name__ == "__main__":
     main()
