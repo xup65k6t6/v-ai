@@ -224,10 +224,10 @@ def main():
                 "val_loss": val_loss,
             }, os.path.join(checkpoint_dir, "checkpoint_last.pt"))
         
-        early_stopping(val_loss, model, device)
-        if early_stopping.early_stop:
-            print("Early stopping triggered.")
-            break
+            early_stopping(val_loss, model, device)
+            if early_stopping.early_stop:
+                print("Early stopping triggered.")
+                break
         
     model = early_stopping.load_best_model(model)
     # Optionally, run test_epoch if desired.
