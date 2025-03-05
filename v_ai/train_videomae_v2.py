@@ -23,7 +23,8 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
     running_loss = 0.0
     total_batches = len(dataloader)
     for i, batch in enumerate(dataloader):
-        print(f"Batch {i+1}/{total_batches}")
+        if i % 10 == 0:
+            print(f"Batch {i+1}/{total_batches}")
         # Dataset returns {"frames": [C, T, H, W]}; add batch dimension if needed.
         frames = batch["frames"].to(device)
         if frames.dim() == 4:
