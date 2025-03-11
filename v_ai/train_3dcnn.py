@@ -193,13 +193,7 @@ def main():
         wandb.init(
             project=wandb_project,
             name=wandb_run_name,
-            config={
-                "epochs": num_epochs,
-                "batch_size": batch_size,
-                "learning_rate": learning_rate,
-                "window_before": window_before,
-                "window_after": window_after,
-            },
+            config=config,
         )
         wandb.watch(model, log="all")
 
