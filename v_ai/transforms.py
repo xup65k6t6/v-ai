@@ -2,6 +2,7 @@
 
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+from transformers import VideoMAEImageProcessor
 
 
 def get_train_transforms(image_size=224):
@@ -43,5 +44,16 @@ def resize_only(image_size=640):
             mean=[0.43216, 0.394666, 0.37645],      # Kinetics mean
             std=[0.22803, 0.22145, 0.216989]        # Kinetics std
         ),
+        ToTensorV2()
+    ])
+
+def get_videomae_transforms(model_name, image_size=224):
+    processor = VideoMAEImageProcessor.from_pretrained(model_name)
+    # Use the processor's normalization parameters if available; otherwise, use common defaults.
+    mean = processor.image_mean if hasattr(processor, "image_mean") else [0.5, 0.5, 0.5]
+    std = processor.image_std if hasattr(processor, "image_std") else [0.5, 0.5, 0.5]
+    return A.Compose([
+        A.Resize(image_size, image_size),
+        A.Normalize(mean=mean, std=std),
         ToTensorV2()
     ])

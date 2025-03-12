@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from v_ai.dataset_videomae import VideoMAE_V2_Dataset, GROUP_ACTIVITY_MAPPING
 from v_ai.models.videomae_v2 import VideoMAEV2ClassificationModel
-from v_ai.transforms import resize_only
+from v_ai.transforms import get_videomae_transforms
 from v_ai.utils.earlystopping import EarlyStopping
 from v_ai.utils.utils import get_checkpoint_dir, get_device
 
@@ -27,8 +27,6 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
             print(f"Batch {i+1}/{total_batches}")
         # Dataset returns {"frames": [C, T, H, W]}; add batch dimension if needed.
         frames = batch["frames"].to(device)
-        if frames.dim() == 4:
-            frames = frames.unsqueeze(0)
         labels = batch["group_label"].to(device)
         optimizer.zero_grad()
         logits = model(frames)
@@ -53,7 +51,6 @@ def validate_epoch(model, dataloader, criterion, device):
             preds = torch.argmax(logits, dim=1)
             all_labels.extend(labels.cpu().numpy())
             all_preds.extend(preds.cpu().numpy())
-    # Calculate metrics
     accuracy = accuracy_score(all_labels, all_preds)
     precision = precision_score(all_labels, all_preds, average="macro", zero_division=0)
     recall = recall_score(all_labels, all_preds, average="macro", zero_division=0)
@@ -75,8 +72,6 @@ def test_epoch(model, dataloader, criterion, device):
     with torch.no_grad():
         for batch in dataloader:
             frames = batch["frames"].to(device)
-            if frames.dim() == 4:
-                frames = frames.unsqueeze(0)
             labels = batch["group_label"].to(device)
             logits = model(frames)
             loss = criterion(logits, labels)
@@ -90,7 +85,7 @@ def test_epoch(model, dataloader, criterion, device):
 
 def main():
     parser = argparse.ArgumentParser(description="Train VideoMAE V2 for Volleyball Group Activity Recognition")
-    parser.add_argument("--config", type=str, default="config/config.yaml", help="Path to config file")
+    parser.add_argument("--config", type=str, default="config/config_videomae.yaml", help="Path to config file")
     args = parser.parse_args()
     
     with open(args.config, "r") as f:
@@ -117,11 +112,13 @@ def main():
     window_before = config.get("window_before", 3)
     window_after = config.get("window_after", 4)
     
-    # Model-specific parameters.
     num_frames = config.get("num_frames", 8)
     num_classes = len(GROUP_ACTIVITY_MAPPING)
     pretrained = config.get("pretrained", True)
-    videomae_v2_model_name = config.get("videomae_v2_model_name", "OpenGVLab/VideoMAEv2-Base")
+    videomae_v2_model_name = config.get("videomae_v2_model_name", "MCG-NJU/videomae-base-finetuned-kinetics")
+    
+    # Use the new VideoMAE transform that resizes to the expected size and normalizes properly.
+    transform = get_videomae_transforms(model_name= videomae_v2_model_name,image_size=image_size)
     
     # device = get_device()
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
@@ -138,10 +135,6 @@ def main():
     else:
         rank = 0
     
-    # Define transform: using your resize_only transform.
-    transform = resize_only(image_size=image_size)
-    
-    # Create datasets for training/validation (data is a folder of frames)
     train_dataset = VideoMAE_V2_Dataset(
         samples_base = samples_base,
         video_ids = train_ids,
