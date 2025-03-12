@@ -15,13 +15,12 @@ from v_ai.models.videomae_v2 import VideoMAEV2ClassificationModel
 from v_ai.transforms import get_videomae_transforms, VideoMAETransform
 from v_ai.utils.earlystopping import EarlyStopping
 from v_ai.utils.utils import get_checkpoint_dir, get_device
-from torch.amp import autocast, GradScaler
+from torch.amp import autocast
 
 os.environ["WANDB_SILENT"] = "true"
 
 def train_epoch(model, dataloader, criterion, optimizer, device):
     model.train()
-    scaler = GradScaler() if device.type == 'cuda' else None
     running_loss = 0.0
     total_batches = len(dataloader)
     for i, batch in enumerate(dataloader):
@@ -35,14 +34,11 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
             with autocast(device_type='cuda', dtype=torch.float16):
                 logits = model(frames)
                 loss = criterion(logits, labels)
-            scaler.scale(loss).backward()  # Scale loss for FP16
-            scaler.step(optimizer)
-            scaler.update()
         else:
             logits = model(frames)
             loss = criterion(logits, labels)
-            loss.backward()
-            optimizer.step()
+        loss.backward()
+        optimizer.step()
         running_loss += loss.item()
     return running_loss / len(dataloader)
 
