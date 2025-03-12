@@ -94,7 +94,8 @@ class VideoMAE_V2_Dataset(Dataset):
                 raise ValueError(f"Failed to load image: {fpath}")
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             if self.transform:
-                img = self.transform(image=img)["image"].float()  # [C, H, W]
+                # img = self.transform(image=img)["image"].float()  # [C, H, W]
+                img = self.transform(img).squeeze(0).float()  # [C, H, W]
             else:
                 img = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
             frames.append(img)

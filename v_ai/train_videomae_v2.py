@@ -12,14 +12,16 @@ from torch.utils.data import DataLoader, DistributedSampler
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from v_ai.dataset_videomae import VideoMAE_V2_Dataset, GROUP_ACTIVITY_MAPPING
 from v_ai.models.videomae_v2 import VideoMAEV2ClassificationModel
-from v_ai.transforms import get_videomae_transforms
+from v_ai.transforms import get_videomae_transforms, VideoMAETransform
 from v_ai.utils.earlystopping import EarlyStopping
 from v_ai.utils.utils import get_checkpoint_dir, get_device
+from torch.amp import autocast, GradScaler
 
 os.environ["WANDB_SILENT"] = "true"
 
 def train_epoch(model, dataloader, criterion, optimizer, device):
     model.train()
+    scaler = GradScaler() if device.type == 'cuda' else None
     running_loss = 0.0
     total_batches = len(dataloader)
     for i, batch in enumerate(dataloader):
@@ -29,10 +31,18 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
         frames = batch["frames"].to(device)
         labels = batch["group_label"].to(device)
         optimizer.zero_grad()
-        logits = model(frames)
-        loss = criterion(logits, labels)
-        loss.backward()
-        optimizer.step()
+        if device.type == 'cuda':
+            with autocast(device_type='cuda', dtype=torch.float16):
+                logits = model(frames)
+                loss = criterion(logits, labels)
+            scaler.scale(loss).backward()  # Scale loss for FP16
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            logits = model(frames)
+            loss = criterion(logits, labels)
+            loss.backward()
+            optimizer.step()
         running_loss += loss.item()
     return running_loss / len(dataloader)
 
@@ -45,8 +55,13 @@ def validate_epoch(model, dataloader, criterion, device):
         for batch in dataloader:
             frames = batch["frames"].to(device)
             labels = batch["group_label"].to(device)
-            logits = model(frames)
-            loss = criterion(logits, labels)
+            if device.type == 'cuda':
+                with autocast(device_type='cuda', dtype=torch.bfloat16):
+                    logits = model(frames)
+                    loss = criterion(logits, labels)
+            else:
+                logits = model(frames)
+                loss = criterion(logits, labels)
             running_loss += loss.item()
             preds = torch.argmax(logits, dim=1)
             all_labels.extend(labels.cpu().numpy())
@@ -73,8 +88,13 @@ def test_epoch(model, dataloader, criterion, device):
         for batch in dataloader:
             frames = batch["frames"].to(device)
             labels = batch["group_label"].to(device)
-            logits = model(frames)
-            loss = criterion(logits, labels)
+            if device.type == 'cuda':
+                with autocast(device_type='cuda', dtype=torch.bfloat16):
+                    logits = model(frames)
+                    loss = criterion(logits, labels)
+            else:
+                logits = model(frames)
+                loss = criterion(logits, labels)
             running_loss += loss.item()
             _, preds = torch.max(logits, 1)
             correct += (preds == labels).sum().item()
@@ -118,7 +138,8 @@ def main():
     videomae_v2_model_name = config.get("videomae_v2_model_name", "MCG-NJU/videomae-base-finetuned-kinetics")
     
     # Use the new VideoMAE transform that resizes to the expected size and normalizes properly.
-    transform = get_videomae_transforms(model_name= videomae_v2_model_name,image_size=image_size)
+    # transform = get_videomae_transforms(model_name= videomae_v2_model_name,image_size=image_size)
+    transform = VideoMAETransform(model_name= videomae_v2_model_name, image_size=image_size)
     
     # device = get_device()
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
