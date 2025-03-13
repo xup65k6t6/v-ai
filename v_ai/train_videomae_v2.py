@@ -33,7 +33,6 @@ def train_epoch(model, dataloader, criterion, optimizer, device, scaler):
         if device.type == 'cuda':
             with autocast(device_type='cuda', dtype=torch.float16):
                 logits = model(frames)
-                logits = logits.float()  # Cast to float32
                 loss = criterion(logits, labels)
             scaler.scale(loss).backward()  # Scale loss and compute gradients
             scaler.step(optimizer)  # Update weights
@@ -59,7 +58,6 @@ def validate_epoch(model, dataloader, criterion, device):
             if device.type == 'cuda':
                 with autocast(device_type='cuda', dtype=torch.float16):
                     logits = model(frames)
-                logits = logits.float()  # Cast to float32
                 loss = criterion(logits, labels)
             else:
                 logits = model(frames)
@@ -93,7 +91,6 @@ def test_epoch(model, dataloader, criterion, device):
             if device.type == 'cuda':
                 with autocast(device_type='cuda', dtype=torch.float16):
                     logits = model(frames)
-                logits = logits.float()  # Cast to float32
                 loss = criterion(logits, labels)
             else:
                 logits = model(frames)
