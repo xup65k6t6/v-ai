@@ -37,7 +37,8 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
         else:
             logits = model(frames)
             loss = criterion(logits, labels)
-        loss.backward()
+        with torch.autograd.detect_anomaly():
+            loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         running_loss += loss.item()
