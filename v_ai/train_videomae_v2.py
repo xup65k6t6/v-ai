@@ -33,11 +33,9 @@ def train_epoch(model, dataloader, criterion, optimizer, device, scaler):
         if device.type == 'cuda':
             with autocast(device_type='cuda', dtype=torch.float16):
                 logits = model(frames)
-            logits = logits.float()  # Cast to float32
-            loss = criterion(logits, labels)
+                logits = logits.float()  # Cast to float32
+                loss = criterion(logits, labels)
             scaler.scale(loss).backward()  # Scale loss and compute gradients
-            scaler.unscale_(optimizer)  # Unscale gradients before clipping
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             scaler.step(optimizer)  # Update weights
             scaler.update()  # Adjust scaling factor
         else:
