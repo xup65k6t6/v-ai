@@ -15,11 +15,11 @@ from v_ai.models.videomae_v2 import VideoMAEV2ClassificationModel
 from v_ai.transforms import get_videomae_transforms, VideoMAETransform
 from v_ai.utils.earlystopping import EarlyStopping
 from v_ai.utils.utils import get_checkpoint_dir, get_device
-from torch.amp import autocast
+from torch.amp import autocast, GradScaler
 
 os.environ["WANDB_SILENT"] = "true"
 
-def train_epoch(model, dataloader, criterion, optimizer, device):
+def train_epoch(model, dataloader, criterion, optimizer, device, scaler):
     model.train()
     running_loss = 0.0
     total_batches = len(dataloader)
@@ -33,14 +33,19 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
         if device.type == 'cuda':
             with autocast(device_type='cuda', dtype=torch.float16):
                 logits = model(frames)
-                loss = criterion(logits, labels)
+            logits = logits.float()  # Cast to float32
+            loss = criterion(logits, labels)
+            scaler.scale(loss).backward()  # Scale loss and compute gradients
+            scaler.unscale_(optimizer)  # Unscale gradients before clipping
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            scaler.step(optimizer)  # Update weights
+            scaler.update()  # Adjust scaling factor
         else:
             logits = model(frames)
             loss = criterion(logits, labels)
-        with torch.autograd.detect_anomaly():
             loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        optimizer.step()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
         running_loss += loss.item()
     return running_loss / len(dataloader)
 
@@ -56,7 +61,8 @@ def validate_epoch(model, dataloader, criterion, device):
             if device.type == 'cuda':
                 with autocast(device_type='cuda', dtype=torch.float16):
                     logits = model(frames)
-                    loss = criterion(logits, labels)
+                logits = logits.float()  # Cast to float32
+                loss = criterion(logits, labels)
             else:
                 logits = model(frames)
                 loss = criterion(logits, labels)
@@ -89,7 +95,8 @@ def test_epoch(model, dataloader, criterion, device):
             if device.type == 'cuda':
                 with autocast(device_type='cuda', dtype=torch.float16):
                     logits = model(frames)
-                    loss = criterion(logits, labels)
+                logits = logits.float()  # Cast to float32
+                loss = criterion(logits, labels)
             else:
                 logits = model(frames)
                 loss = criterion(logits, labels)
@@ -207,10 +214,10 @@ def main():
     # else:
     #     wandb.init(project=wandb_project, name=wandb_run_name, config=config, mode="disabled")
     
-    
+    scaler = GradScaler()
     for epoch in range(num_epochs):
         print(f"Epoch {epoch+1}/{num_epochs}")
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
+        train_loss = train_epoch(model, train_loader, criterion, optimizer, device, scaler)
         val_loss, val_metrics = validate_epoch(model, val_loader, criterion, device)
         if rank == 0:
             wandb.log({
