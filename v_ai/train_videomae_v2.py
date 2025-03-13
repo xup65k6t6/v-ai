@@ -31,7 +31,7 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
         labels = batch["group_label"].to(device)
         optimizer.zero_grad()
         if device.type == 'cuda':
-            with autocast(device_type='cuda', dtype=torch.float16):
+            with autocast(device_type='cuda', dtype=torch.float32):
                 logits = model(frames)
                 loss = criterion(logits, labels)
         else:
@@ -54,7 +54,7 @@ def validate_epoch(model, dataloader, criterion, device):
             frames = batch["frames"].to(device)
             labels = batch["group_label"].to(device)
             if device.type == 'cuda':
-                with autocast(device_type='cuda', dtype=torch.float16):
+                with autocast(device_type='cuda', dtype=torch.float32):
                     logits = model(frames)
                     loss = criterion(logits, labels)
             else:
@@ -87,7 +87,7 @@ def test_epoch(model, dataloader, criterion, device):
             frames = batch["frames"].to(device)
             labels = batch["group_label"].to(device)
             if device.type == 'cuda':
-                with autocast(device_type='cuda', dtype=torch.float16):
+                with autocast(device_type='cuda', dtype=torch.float32):
                     logits = model(frames)
                     loss = criterion(logits, labels)
             else:

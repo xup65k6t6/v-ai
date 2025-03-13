@@ -25,7 +25,7 @@ class VideoMAEV2ClassificationModel(nn.Module):
 
         if pretrained:
             # self.videomae = AutoModel.from_pretrained(model_name, config=config, trust_remote_code=True)
-            self.videomae = VideoMAEForVideoClassification.from_pretrained(model_name, config=config, ignore_mismatched_sizes=True, attn_implementation="sdpa", torch_dtype= (torch.float16 if torch.cuda.is_available() else torch.float32))
+            self.videomae = VideoMAEForVideoClassification.from_pretrained(model_name, config=config, ignore_mismatched_sizes=True, attn_implementation="sdpa", torch_dtype= (torch.float32 if torch.cuda.is_available() else torch.float32))
         else:
             self.videomae = AutoModel.from_config(config, trust_remote_code=True)
 
