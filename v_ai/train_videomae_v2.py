@@ -164,7 +164,7 @@ def main():
         num_frames = num_frames
     )
     test_sampler = DistributedSampler(test_dataset) if dist.is_initialized() else None
-    
+    print(f"Train dataset size: {len(train_dataset)} \n Val dataset size: {len(val_dataset)} \n Test dataset size: {len(test_dataset)}")
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=(train_sampler is None), num_workers=num_workers, sampler=train_sampler)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle= False , num_workers=num_workers, sampler=val_sampler)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, sampler=test_sampler)
