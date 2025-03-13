@@ -52,7 +52,7 @@ def validate_epoch(model, dataloader, criterion, device):
             frames = batch["frames"].to(device)
             labels = batch["group_label"].to(device)
             if device.type == 'cuda':
-                with autocast(device_type='cuda', dtype=torch.bfloat16):
+                with autocast(device_type='cuda', dtype=torch.float16):
                     logits = model(frames)
                     loss = criterion(logits, labels)
             else:
@@ -85,7 +85,7 @@ def test_epoch(model, dataloader, criterion, device):
             frames = batch["frames"].to(device)
             labels = batch["group_label"].to(device)
             if device.type == 'cuda':
-                with autocast(device_type='cuda', dtype=torch.bfloat16):
+                with autocast(device_type='cuda', dtype=torch.float16):
                     logits = model(frames)
                     loss = criterion(logits, labels)
             else:
