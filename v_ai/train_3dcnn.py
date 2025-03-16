@@ -45,7 +45,7 @@ class Trainer:
         all_labels = []
         all_preds = []
         for i, batch in enumerate(self.train_loader):
-            if i % 10 == 0:
+            if i % 10 == 0 and self.rank == 0:
                 print(f"Batch {i+1}/{total_batches}")
             frames = batch["frames"].to(self.device).permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
             labels = batch["group_label"].to(self.device)
