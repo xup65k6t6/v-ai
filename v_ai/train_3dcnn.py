@@ -31,7 +31,7 @@ class Trainer:
         self.criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.Adam(self.model.parameters(), lr=config['learning_rate'])
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode="min", factor=0.1, patience=2)
-        self.early_stopping = EarlyStopping(patience=config['patience'], verbose=True, path=os.path.join(config['checkpoint_dir'], "best.pt"))
+        self.early_stopping = EarlyStopping(patience=config['patience'], verbose=True, path=os.path.join(config['checkpoint_dir'], "best_3dcnn.pt"))
         self.rank = dist.get_rank() if dist.is_initialized() else 0
         if self.rank == 0:
             wandb.login(key=os.environ.get("WANDB_API_KEY"))
