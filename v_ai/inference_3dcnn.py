@@ -53,7 +53,7 @@ def load_model_checkpoint(model, checkpoint_path, device):
             print(f"Fallback loading also failed: {fallback_e}")
             exit(1)
 
-def predict_clips(video_path, model, transform, config, device, stride):
+def predict_clips(video_path, model, transform, config, device, stride, batch_size=8):
     """
     Pass 1: Processes a video file, predicts group activity for each clip,
             and returns a list of predictions with frame ranges.
@@ -97,6 +97,10 @@ def predict_clips(video_path, model, transform, config, device, stride):
 
     model.eval() # Set model to evaluation mode
 
+    # Batch buffers
+    batch_clip_tensors = []
+    batch_clip_info = []
+
     # Use tqdm for progress bar
     pbar = tqdm(total=frame_count, desc="Predicting Clips")
 
@@ -119,36 +123,48 @@ def predict_clips(video_path, model, transform, config, device, stride):
 
             # Check if the buffer is full enough to form a clip
             if len(frames_buffer) == sequence_length:
-                # --- Prepare the clip for the model ---
-                clip_frames = list(frames_buffer) # Get frames from deque
+                clip_frames = list(frames_buffer)
+                clip_tensor = torch.stack(clip_frames)             # [T, C, H, W]
+                clip_tensor = clip_tensor.permute(1, 0, 2, 3)      # [C, T, H, W]
+                clip_tensor = clip_tensor.unsqueeze(0)             # [1, C, T, H, W]
 
-                # Stack frames into a tensor: [T, C, H, W]
-                clip_tensor = torch.stack(clip_frames)
+                batch_clip_tensors.append(clip_tensor.squeeze(0))  # [C, T, H, W]
+                batch_clip_info.append((frame_idx - sequence_length + 1, frame_idx))
 
-                # Permute to match model input: [C, T, H, W]
-                clip_tensor = clip_tensor.permute(1, 0, 2, 3)
+                if len(batch_clip_tensors) == batch_size:
+                    batch_tensor = torch.stack(batch_clip_tensors).to(device, non_blocking=True)  # [B, C, T, H, W]
+                    logits = model(batch_tensor)
+                    probabilities = torch.softmax(logits, dim=1)
+                    predicted_indices = torch.argmax(probabilities, dim=1)
 
-                # Add batch dimension: [1, C, T, H, W]
-                clip_tensor = clip_tensor.unsqueeze(0).to(device)
+                    for i in range(batch_size):
+                        pred_idx = predicted_indices[i].item()
+                        pred_label = INDEX_TO_GROUP_ACTIVITY.get(pred_idx, "Unknown")
+                        confidence = probabilities[i, pred_idx].item()
+                        start, end = batch_clip_info[i]
+                        clip_predictions.append((start, end, pred_label, confidence))
 
-                # --- Run Inference ---
-                logits = model(clip_tensor) # [1, num_classes]
-                probabilities = torch.softmax(logits, dim=1)
-                predicted_index = torch.argmax(probabilities, dim=1).item()
-                predicted_label = INDEX_TO_GROUP_ACTIVITY.get(predicted_index, "Unknown")
-                confidence = probabilities[0, predicted_index].item() # Optional
+                    batch_clip_tensors.clear()
+                    batch_clip_info.clear()
 
-                # --- Store Result ---
-                # The clip corresponds to frames [frame_idx - sequence_length + 1, frame_idx]
-                start_frame_idx = frame_idx - sequence_length + 1
-                end_frame_idx = frame_idx
-                clip_predictions.append((start_frame_idx, end_frame_idx, predicted_label, confidence))
-
-                # --- Slide the window ---
-                # Remove 'stride' frames from the left of the buffer to advance
+                # Slide the window
                 for _ in range(stride):
                     if frames_buffer:
                         frames_buffer.popleft()
+
+    # Final flush
+    if batch_clip_tensors:
+        batch_tensor = torch.stack(batch_clip_tensors).to(device, non_blocking=True)
+        logits = model(batch_tensor)
+        probabilities = torch.softmax(logits, dim=1)
+        predicted_indices = torch.argmax(probabilities, dim=1)
+
+        for i in range(len(batch_clip_tensors)):
+            pred_idx = predicted_indices[i].item()
+            pred_label = INDEX_TO_GROUP_ACTIVITY.get(pred_idx, "Unknown")
+            confidence = probabilities[i, pred_idx].item()
+            start, end = batch_clip_info[i]
+            clip_predictions.append((start, end, pred_label, confidence))
 
     pbar.close()
     cap.release()
