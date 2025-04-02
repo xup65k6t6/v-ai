@@ -1,0 +1,4 @@
+num_workers: 4
+window_before: 3
+window_after: 4
+image_size: 640

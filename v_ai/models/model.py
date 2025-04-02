@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from v_ai.models.cnn import ResNetBackbone
 from v_ai.models.temporal import LSTMTemporalModel
-
+from torchvision.models.video import r3d_18, R3D_18_Weights
 
 class GroupActivityRecognitionModel(nn.Module):
     def __init__(self, num_classes, resnet_size="18", person_hidden_dim=256, group_hidden_dim=256,
@@ -100,48 +100,59 @@ class GroupActivityRecognitionModel(nn.Module):
         return logits
 
 class VideoClassificationModel(nn.Module):
-    def __init__(self, cnn_backbone='resnet', lstm_hidden_dim=256, lstm_layers=1,
-                 num_classes=2, bidirectional=False, pretrained=True):
+    def __init__(self, num_classes, resnet_size="18", hidden_dim=256, lstm_layers=1,
+                 bidirectional=False, pretrained=True):
+        super(VideoClassificationModel, self).__init__()
+        self.cnn = ResNetBackbone(resnet_size=resnet_size, pretrained=pretrained)
+        cnn_feature_dim = self.cnn.output_dim
+        
+        self.lstm = LSTMTemporalModel(
+            input_dim=cnn_feature_dim,
+            hidden_dim=hidden_dim,
+            num_layers=lstm_layers,
+            num_classes=hidden_dim,
+            bidirectional=bidirectional
+        )
+        self.classifier = nn.Linear(hidden_dim, num_classes)
+
+    def forward(self, frames):
         """
         Args:
-            cnn_backbone (str): Currently supports 'resnet'. You can extend this to 'efficientnet'.
-            lstm_hidden_dim (int): Hidden dimension for the LSTM.
-            lstm_layers (int): Number of LSTM layers.
-            num_classes (int): Number of classes for classification.
-            bidirectional (bool): Use bidirectional LSTM.
-            pretrained (bool): Whether to use pretrained weights for the CNN backbone.
+            frames: Tensor [B, T, C, H, W]
+        Returns:
+            logits: Tensor [B, num_classes]
         """
-        super(VideoClassificationModel, self).__init__()
+        B, T, C, H, W = frames.shape
+        # Process each frame with CNN
+        cnn_features = []
+        for t in range(T):
+            frame = frames[:, t]  # [B, C, H, W]
+            feat = self.cnn(frame)  # [B, cnn_feature_dim]
+            cnn_features.append(feat)
+        features_seq = torch.stack(cnn_features, dim=1)  # [B, T, cnn_feature_dim]
+        
+        # Temporal modeling with LSTM
+        lstm_output = self.lstm(features_seq)  # [B, hidden_dim]
+        
+        # Classification
+        logits = self.classifier(lstm_output)  # [B, num_classes]
+        return logits
 
-        if cnn_backbone == 'resnet':
-            self.cnn = ResNetBackbone(pretrained=pretrained)
-            cnn_feature_dim = self.cnn.output_dim
-        else:
-            # Placeholder for other backbones (e.g., EfficientNet)
-            self.cnn = ResNetBackbone(pretrained=pretrained)
-            cnn_feature_dim = self.cnn.output_dim
 
-        self.temporal_model = LSTMTemporalModel(input_dim=cnn_feature_dim,
-                                                hidden_dim=lstm_hidden_dim,
-                                                num_layers=lstm_layers,
-                                                num_classes=num_classes,
-                                                bidirectional=bidirectional)
+class Video3DClassificationModel(nn.Module):
+    def __init__(self, num_classes, pretrained=True):
+        super(Video3DClassificationModel, self).__init__()
+        # Load pretrained ResNet3D-18
+        weights = R3D_18_Weights.DEFAULT if pretrained else None
+        self.backbone = r3d_18(weights=weights)
+        self.backbone.fc = nn.Linear(self.backbone.fc.in_features, num_classes)  # Modify final layer
 
     def forward(self, x):
         """
         Args:
-            x: Tensor of shape [B, T, C, H, W] where T is the sequence length.
+            x: Tensor [B, C, T, H, W]
         Returns:
-            logits: Tensor of shape [B, num_classes]
+            logits: Tensor [B, num_classes]
         """
-        B, T, C, H, W = x.shape
-        cnn_features = []
-        # Process each frame with the CNN backbone
-        for t in range(T):
-            frame = x[:, t, :, :, :]  # Shape: [B, C, H, W]
-            feat = self.cnn(frame)     # Shape: [B, cnn_feature_dim]
-            cnn_features.append(feat)
-        # Stack along the time dimension -> shape: [B, T, cnn_feature_dim]
-        features_seq = torch.stack(cnn_features, dim=1)
-        logits = self.temporal_model(features_seq)
+        logits = self.backbone(x)  # 3D CNN processes spatio-temporal data directly
         return logits

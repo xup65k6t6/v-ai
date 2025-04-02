@@ -173,6 +173,101 @@ class GroupActivityDataset(Dataset):
         }
 
 
+# New SimplifiedGroupActivityDataset for full-frame-only processing
+class SimplifiedGroupActivityDataset(Dataset):
+    def __init__(self, samples_base, video_ids, window_before=5, window_after=4, transform=None, img_size=1280):
+        self.samples_base = samples_base
+        self.video_ids = [str(v) for v in video_ids]
+        self.window_before = window_before
+        self.window_after = window_after
+        self.T = window_before + 1 + window_after  # total frames in window
+        self.transform = transform
+        self.img_size = img_size
+
+        self.samples = []
+        for vid in self.video_ids:
+            video_dir = os.path.join(samples_base, vid)
+            ann_path = os.path.join(video_dir, "annotations.txt")
+            if not os.path.exists(ann_path):
+                print(f"Warning: annotations.txt not found in {video_dir}")
+                continue
+            with open(ann_path, "r") as f:
+                lines = f.readlines()
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                tokens = line.split()
+                if len(tokens) < 2:
+                    continue
+                frame_id = os.path.splitext(tokens[0])[0]
+                group_str = tokens[1].replace("-", "_").lower()
+                group_label = GROUP_ACTIVITY_MAPPING.get(group_str, 0)
+                sample = {
+                    "video_id": vid,
+                    "frame_id": frame_id,
+                    "group_label": group_label,
+                }
+                self.samples.append(sample)
+
+    def __len__(self):
+        return len(self.samples)
+
+    def _load_frame_window(self, sample_dir, target_filename):
+        all_files = [f for f in os.listdir(sample_dir) if f.lower().endswith((".jpg", ".png"))]
+        if not all_files:
+            raise ValueError(f"No image files found in {sample_dir}")
+        all_files.sort()
+
+        try:
+            target_idx = all_files.index(target_filename)
+        except ValueError:
+            target_idx = len(all_files) // 2
+
+        start_idx = max(0, target_idx - self.window_before)
+        end_idx = min(len(all_files), start_idx + self.T)
+        selected_files = all_files[start_idx:end_idx]
+
+        frames = []
+        for fname in selected_files:
+            fpath = os.path.join(sample_dir, fname)
+            img = cv2.imread(fpath)
+            if img is None:
+                raise ValueError(f"Failed to load image: {fpath}")
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            if self.transform:
+                img = self.transform(image=img)["image"].float()  # [C, H, W], normalized
+            else:
+                img = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0  # [C, H, W], [0, 1]
+            frames.append(img)
+        #padding
+        if len(frames) < self.T:
+            last_frame = frames[-1]
+            padding = [last_frame.clone() for _ in range(self.T - len(frames))]
+            frames.extend(padding)
+        frames = torch.stack(frames)  # [T, C, H, W]
+        return frames
+
+    def __getitem__(self, idx):
+        sample = self.samples[idx]
+        video_id = sample["video_id"]
+        frame_id = sample["frame_id"]
+        possible_names = [frame_id + ext for ext in [".jpg", ".png"]]
+        sample_dir = os.path.join(self.samples_base, video_id, frame_id)
+        if not os.path.isdir(sample_dir):
+            sample_dir = os.path.join(self.samples_base, video_id)
+            if not os.path.isdir(sample_dir):
+                raise ValueError(f"Sample directory not found for video {video_id} frame {frame_id}")
+
+        all_files = [f for f in os.listdir(sample_dir) if f.lower().endswith((".jpg", ".png"))]
+        all_files.sort()
+        target_filename = next((name for name in possible_names if name in all_files), all_files[len(all_files)//2])
+        frames = self._load_frame_window(sample_dir, target_filename)  # [T, C, H, W]
+        
+        return {
+            "frames": frames,              # [T, C, H, W]
+            "group_label": torch.tensor(sample["group_label"]).long()
+        }
 
 class VideoAnnotationDataset(Dataset):
     def __init__(self, annotation, split='train', base_path='', transform=None,
