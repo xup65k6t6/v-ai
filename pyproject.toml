@@ -6,7 +6,7 @@ authors = [
     {name = "Christopher Lin",email = "example@example.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
 "numpy",
 "pandas",
@@ -16,10 +16,6 @@ dependencies = [
 "opencv-python (>=4.11.0.86,<5.0.0.0)",
 "albumentations (>=2.0.3,<3.0.0)",
 "wandb",
-"transformers",
-"easydict",
-"timm",
-"scikit-learn",
 ]
 
 

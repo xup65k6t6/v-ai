@@ -60,27 +60,3 @@ def display_temporal_tensor_frames(tensor_frames):
         single_frame = np.transpose(single_frame, (1, 2, 0))
         image = Image.fromarray((single_frame * 255).astype(np.uint8))
         image.show()
-
-def display_single_frame(frame, unnormalize=False, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)):
-    """
-    Converts a single frame tensor to an image and displays it.
-    
-    Parameters:
-    frame (torch.Tensor): A tensor of shape [C, H, W]
-    unnormalize (bool): Whether to unnormalize the image (default: False)
-    mean (tuple): Mean values used for normalization (default: (0.485, 0.456, 0.406))
-    std (tuple): Standard deviation values used for normalization (default: (0.229, 0.224, 0.225))
-    """
-    # Convert tensor to numpy array
-    img_array = frame.permute(1, 2, 0).numpy()
-
-    if unnormalize:
-        img_array = img_array * np.array(std) + np.array(mean)  # Unnormalize
-        img_array = np.clip(img_array, 0, 1)  # Clip to valid range (0,1)
-
-    # Convert to uint8
-    img_array = (img_array * 255).astype('uint8')
-
-    # Convert to image
-    Image.fromarray(img_array).show()
-    return img_array
