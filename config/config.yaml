@@ -9,6 +9,14 @@ learning_rate: 0.0001
 patience: 5
 num_workers: 4
 wandb_project: "volleyball_group_activity"
+window_before: 3
+window_after: 4
+image_size: 320
+
+# Model configuration
+model_type: "3d_cnn"  # Options: "3d_cnn", "2d_lstm", etc.
+resnet_size: "18"     # For 3D CNN: "18" (ResNet3D-18), could extend to "50" if supported
+
 
 # Additional model parameters:
 resnet_size: "50"
