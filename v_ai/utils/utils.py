@@ -2,7 +2,6 @@ import os
 import numpy as np
 import torch
 from PIL import Image
-import torch.nn.functional as F
 
 
 def custom_collate(batch):
