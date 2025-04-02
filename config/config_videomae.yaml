@@ -1,0 +1,33 @@
+samples_base: "/kaggle/input/vaidataset/videos/videos"
+checkpoint_dir: "/kaggle/working/checkpoints"
+train_ids: [1, 3, 6, 7, 10, 13, 15, 16, 18, 22]
+val_ids: [0, 2, 8]
+test_ids: []
+num_epochs: 50
+batch_size: 3
+learning_rate: 0.00005
+patience: 10
+num_workers: 4
+wandb_project: "volleyball_group_activity"
+wandb_run_name: "kaggle_videomae"
+window_before: 3
+window_after: 4
+image_size: 640
+videomae_v2_model_name: MCG-NJU/videomae-base-finetuned-kinetics
+
+# Model configuration
+model_type: "videomae"  # Options: "3d_cnn", "2d_lstm", etc.
+# resnet_size: "18"     # For 3D CNN: "18" (ResNet3D-18), could extend to "50" if supported
+
+
+# Additional model parameters:
+# resnet_size: "50"
+# person_hidden_dim: 256
+# group_hidden_dim: 256
+# person_lstm_layers: 1
+# group_lstm_layers: 1
+# bidirectional: false
+pretrained: true
+
+# Optionally, choose a transform mode: "none" or "val"
+transform: "none"
