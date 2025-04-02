@@ -25,19 +25,45 @@ def get_val_transforms(image_size=224):
     ])
 
 
-def get_3dcnn_transform(image_size=112):
+# Renamed from get_3dcnn_transform
+def get_3dcnn_val_transforms(image_size=112):
+    """Validation/Test transforms for 3D CNN."""
     return A.Compose([
-        A.Resize(image_size + 16, image_size + 16),  # e.g., 128 for image_size=112
-        A.CenterCrop(image_size, image_size),        # e.g., 112x112
+        A.Resize(image_size, image_size), # Keep resize consistent for validation
+        # A.Resize(image_size + 16, image_size + 16), # Original resize before crop
+        # A.CenterCrop(image_size, image_size),        # Original crop
         A.Normalize(
             mean=[0.43216, 0.394666, 0.37645],      # Kinetics mean
             std=[0.22803, 0.22145, 0.216989]        # Kinetics std
         ),
         ToTensorV2()
     ])
-    
+
+# Updated training transforms for 3D CNN
+def get_3dcnn_train_transforms(image_size=112):
+    """Training transforms with augmentation for 3D CNN."""
+    # Resize to ~115% of target size before random crop
+    resize_intermediate = int(image_size * 1.15)
+    return A.Compose([
+        A.Resize(resize_intermediate, resize_intermediate),
+        A.RandomCrop(image_size, image_size),
+        A.HorizontalFlip(p=0.5),
+        # --- Optional Augmentations (uncomment to enable) ---
+        A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.2),
+        A.GaussianBlur(blur_limit=(3, 7), p=0.2),
+        A.GaussNoise(p=0.2),
+        A.Rotate(limit=15, p=0.2), # Use rotation with caution
+        # ----------------------------------------------------
+        A.Normalize(
+            mean=[0.43216, 0.394666, 0.37645],      # Kinetics mean
+            std=[0.22803, 0.22145, 0.216989]        # Kinetics std
+        ),
+        ToTensorV2()
+    ])
+
 
 def resize_only(image_size=640):
+    # This might be used elsewhere, keep it for now
     return A.Compose([
         A.Resize(image_size, image_size),
         A.Normalize(
@@ -57,7 +83,7 @@ class VideoMAETransform:
         """
         Args:
             frames (list): A list of frames (as numpy arrays or PIL Images).
-            
+
         Returns:
             torch.FloatTensor: Processed pixel values with shape [num_frames, num_channels, height, width].
         """

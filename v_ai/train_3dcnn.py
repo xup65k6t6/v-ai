@@ -12,7 +12,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import yaml
 from v_ai.data import GROUP_ACTIVITY_MAPPING, SimplifiedGroupActivityDataset
 from v_ai.models.model import Video3DClassificationModel
-from v_ai.transforms import resize_only
+from v_ai.transforms import get_3dcnn_train_transforms, get_3dcnn_val_transforms
 from v_ai.utils.earlystopping import EarlyStopping
 from v_ai.utils.utils import get_device
 
@@ -165,17 +165,19 @@ def main():
     test_ids = config.get("test_ids", [4, 5, 9, 11, 14, 20, 21, 25, 29, 34, 35, 37, 43, 44, 45, 47])
 
     # Dataset and DataLoader setup
-    transform = resize_only(image_size=config['image_size'])
+    train_transform = get_3dcnn_train_transforms(image_size=config['image_size'])
+    val_transform = get_3dcnn_val_transforms(image_size=config['image_size'])
+
     train_dataset = SimplifiedGroupActivityDataset(
-        config['samples_base'], video_ids=train_ids, transform=transform,
+        config['samples_base'], video_ids=train_ids, transform=train_transform,
         window_before=config['window_before'], window_after=config['window_after']
     )
     val_dataset = SimplifiedGroupActivityDataset(
-        config['samples_base'], video_ids=val_ids, transform=transform,
+        config['samples_base'], video_ids=val_ids, transform=val_transform,
         window_before=config['window_before'], window_after=config['window_after']
     )
     test_dataset = SimplifiedGroupActivityDataset(
-        config['samples_base'], video_ids=test_ids, transform=transform,
+        config['samples_base'], video_ids=test_ids, transform=val_transform, # Use val_transform for test set too
         window_before=config['window_before'], window_after=config['window_after']
     )
 
