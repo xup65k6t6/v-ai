@@ -5,7 +5,7 @@ import os
 import cv2
 import torch
 import yaml
-
+import pickle
 from collections import deque
 from tqdm import tqdm # For progress bars
 
@@ -53,7 +53,7 @@ def load_model_checkpoint(model, checkpoint_path, device):
             print(f"Fallback loading also failed: {fallback_e}")
             exit(1)
 
-def predict_clips(video_path, model, transform, config, device, stride, batch_size=8):
+def predict_clips(video_path, output_path, model, transform, config, device, stride, batch_size=8):
     """
     Pass 1: Processes a video file, predicts group activity for each clip,
             and returns a list of predictions with frame ranges.
@@ -77,6 +77,18 @@ def predict_clips(video_path, model, transform, config, device, stride, batch_si
     window_before = config['window_before']
     window_after = config['window_after']
     sequence_length = window_before + 1 + window_after  # T
+
+    # Generate cache file name
+    cache_dir = os.path.join(os.path.dirname(output_path), "predictions_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_file = os.path.join(cache_dir, os.path.splitext(os.path.basename(video_path))[0] + "_predictions.pkl")
+
+    # If cached predictions exist, load and return them
+    if os.path.exists(cache_file):
+        with open(cache_file, 'rb') as f:
+            cached = pickle.load(f)
+        print(f"Loaded cached predictions from {cache_file}")
+        return cached['clip_predictions'], cached['frame_count'], cached['fps'], cached['width'], cached['height']
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -169,9 +181,20 @@ def predict_clips(video_path, model, transform, config, device, stride, batch_si
     pbar.close()
     cap.release()
     print(f"Pass 1 Finished. Generated {len(clip_predictions)} predictions.")
+        
+    # Save predictions to cache
+    with open(cache_file, 'wb') as f:
+        pickle.dump({
+            'clip_predictions': clip_predictions,
+            'frame_count': frame_count,
+            'fps': fps,
+            'width': width,
+            'height': height
+        }, f)
+    print(f"Saved predictions to {cache_file}")
     return clip_predictions, frame_count, fps, width, height
 
-def annotate_video(video_path, output_path, clip_predictions, total_frames, fps, width, height, confidence_threshold=0.0):
+def annotate_video(video_path, output_path, clip_predictions, total_frames, fps, width, height, confidence_threshold=0.9, label_hold_duration=5.0):
     """
     Pass 2: Reads the video again, draws the predicted labels onto frames,
             and writes the annotated video to the output file.
@@ -199,8 +222,10 @@ def annotate_video(video_path, output_path, clip_predictions, total_frames, fps,
         cap.release()
         return
 
+    # State variables for label persistence
     current_prediction_idx = 0
-    active_label = None
+    last_confident_label_info = None # Stores (label_text, end_frame_idx)
+    label_hold_frames = int(fps * label_hold_duration) if fps > 0 else 0
 
     pbar = tqdm(total=total_frames, desc="Annotating Frames")
 
@@ -211,28 +236,41 @@ def annotate_video(video_path, output_path, clip_predictions, total_frames, fps,
             break
         pbar.update(1)
 
-        # Update active_label based on prediction and confidence
+        active_label_text = None # Label to draw on this specific frame
+
+        # --- Update last confident prediction seen so far ---
+        # Iterate through predictions whose start frame is at or before the current frame
         while (current_prediction_idx < len(clip_predictions) and
                clip_predictions[current_prediction_idx][0] <= frame_idx):
             start, end, label, conf = clip_predictions[current_prediction_idx]
-            if end >= frame_idx:
-                active_label = f"{label} ({conf:.2f})" if conf >= confidence_threshold else None
-            current_prediction_idx += 1
 
-        # Backup check in case of gap
-        if current_prediction_idx > 0:
-            prev = clip_predictions[current_prediction_idx - 1]
-            if prev[0] <= frame_idx <= prev[1]:
-                active_label = f"{prev[2]} ({prev[3]:.2f})" if prev[3] >= confidence_threshold else None
+            # Check if this prediction is confident AND relevant (covers current frame)
+            # We update if the confident prediction *starts* at or before the current frame,
+            # as this indicates it's the latest relevant confident info we've encountered.
+            if conf >= confidence_threshold:
+                # Store the label text and the END frame of this confident prediction
+                last_confident_label_info = (f"{label} ({conf:.2f})", end)
+
+            current_prediction_idx += 1 # Move to the next prediction regardless of confidence for the next frame check
+
+
+        # --- Determine label to display on the current frame ---
+        if last_confident_label_info:
+            label_text, confident_prediction_end_frame = last_confident_label_info
+            # Show the label if the current frame is BEFORE the hold duration expires
+            # Hold duration starts *after* the confident prediction ends.
+            if frame_idx <= confident_prediction_end_frame + label_hold_frames:
+                active_label_text = label_text
+            #else: The hold duration has expired for the last confident label
 
         annotated_frame = frame.copy()
 
-        if active_label:
+        if active_label_text:
             font_scale = 1.2
             thickness = 2
             margin_top = 30
 
-            (text_width, text_height), baseline = cv2.getTextSize(active_label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+            (text_width, text_height), baseline = cv2.getTextSize(active_label_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
             text_x = (width - text_width) // 2
             text_y = margin_top + text_height
 
@@ -243,7 +281,7 @@ def annotate_video(video_path, output_path, clip_predictions, total_frames, fps,
                           cv2.FILLED)
 
             cv2.putText(annotated_frame,
-                        active_label,
+                        active_label_text,
                         (text_x, text_y),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         font_scale,
@@ -284,6 +322,7 @@ def main():
     image_size = config.get('image_size', 640) 
     window_before = config.get('window_before', 3)
     window_after = config.get('window_after', 4)
+    batch_size = config.get('batch_size', 8)
     sequence_length = window_before + 1 + window_after
     num_classes = len(GROUP_ACTIVITY_MAPPING)
     checkpoint_dir = args.checkpoint_path if args.checkpoint_path else config.get('checkpoint_dir', 'checkpoints')
@@ -355,7 +394,7 @@ def main():
 
         # --- Pass 1: Predict Clips ---
         clip_predictions, total_frames, fps, width, height = predict_clips(
-            input_path, model, transform, config, device, stride
+            input_path, output_path, model, transform, config, device, stride, batch_size=batch_size
         )
 
         if clip_predictions is None or not clip_predictions:
