@@ -26,7 +26,6 @@ class EarlyStopping:
 
         if self.best_score is None:
             self.best_score = score
-            self.val_loss_min = val_loss
             self.save_checkpoint(val_loss, model, device)
         elif score < self.best_score + self.delta:
             self.counter += 1
@@ -37,7 +36,6 @@ class EarlyStopping:
                 self.early_stop = True
         else:
             self.best_score = score
-            self.val_loss_min = val_loss
             self.save_checkpoint(val_loss, model, device)
             self.counter = 0
 
