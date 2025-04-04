@@ -43,7 +43,7 @@ def get_3dcnn_val_transforms(image_size=112):
 def get_3dcnn_train_transforms(image_size=112):
     """Training transforms with augmentation for 3D CNN."""
     return A.Compose([
-        A.RandomResizedCrop((image_size, image_size), scale=(0.9, 1.0)),
+        A.Resize(image_size, image_size),
         # --- Optional Augmentations (uncomment to enable) ---
         A.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.05, p=0.1),
         A.GaussianBlur(blur_limit=(3, 7), p=0.1),
