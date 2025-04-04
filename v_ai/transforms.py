@@ -45,14 +45,12 @@ def get_3dcnn_train_transforms(image_size=112):
     # Resize to ~115% of target size before random crop
     resize_intermediate = int(image_size * 1.15)
     return A.Compose([
-        A.Resize(resize_intermediate, resize_intermediate),
-        A.RandomCrop(image_size, image_size),
-        A.HorizontalFlip(p=0.5),
+        A.RandomResizedCrop(image_size, scale=(0.8, 1.0), p=0.2),
         # --- Optional Augmentations (uncomment to enable) ---
         A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.2),
         A.GaussianBlur(blur_limit=(3, 7), p=0.2),
         A.GaussNoise(p=0.2),
-        A.Rotate(limit=15, p=0.2), # Use rotation with caution
+        A.Rotate(limit=10, p=0.2), # Use rotation with caution
         # ----------------------------------------------------
         A.Normalize(
             mean=[0.43216, 0.394666, 0.37645],      # Kinetics mean
