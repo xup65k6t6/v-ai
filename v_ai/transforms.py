@@ -42,15 +42,12 @@ def get_3dcnn_val_transforms(image_size=112):
 # Updated training transforms for 3D CNN
 def get_3dcnn_train_transforms(image_size=112):
     """Training transforms with augmentation for 3D CNN."""
-    # Resize to ~115% of target size before random crop
-    resize_intermediate = int(image_size * 1.15)
     return A.Compose([
-        A.RandomResizedCrop((image_size, image_size), scale=(0.8, 1.0)),
+        A.RandomResizedCrop((image_size, image_size), scale=(0.9, 1.0)),
         # --- Optional Augmentations (uncomment to enable) ---
-        A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.2),
-        A.GaussianBlur(blur_limit=(3, 7), p=0.2),
+        A.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.05, p=0.1),
+        A.GaussianBlur(blur_limit=(3, 7), p=0.1),
         A.GaussNoise(p=0.2),
-        A.Rotate(limit=10, p=0.2), # Use rotation with caution
         # ----------------------------------------------------
         A.Normalize(
             mean=[0.43216, 0.394666, 0.37645],      # Kinetics mean
