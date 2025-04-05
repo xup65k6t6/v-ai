@@ -105,6 +105,7 @@ class Trainer:
         # Check for existing checkpoint to resume training
         start_epoch = 0
         if self.resume and os.path.exists(self.checkpoint_path):
+            # TODO: load checkpoint_path from separate variable in config or argument. It is possible the last checkpoint is not accessible from config[checkpoint_dir]
             checkpoint = torch.load(self.checkpoint_path, map_location=self.device)
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
