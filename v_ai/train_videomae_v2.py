@@ -19,12 +19,22 @@ from v_ai.utils.utils import get_checkpoint_dir, get_device
 os.environ["WANDB_SILENT"] = "true"
 
 class Trainer:
-    def __init__(self, config, model, train_loader, val_loader, test_loader, device, resume=False):
+    # Add output_dir, modify checkpoint paths
+    def __init__(self, config, model, train_loader, val_loader, test_loader, device, resume=False, resume_path=None, output_dir=None): # Added output_dir
         self.config = config
         self.model = model.to(device)
         self.device = device
         self.resume = resume
+        self.resume_path = resume_path # Path to LOAD from
+        self.output_dir = output_dir   # Directory to SAVE checkpoints to
         self.rank = dist.get_rank() if dist.is_initialized() else 0
+
+        if not self.output_dir:
+            raise ValueError("Output directory must be specified.") # Make output_dir mandatory
+
+        # Ensure output directory exists (only rank 0 needs to create it)
+        if self.rank == 0:
+            os.makedirs(self.output_dir, exist_ok=True)
 
         if dist.is_initialized():
             # Ensure the device is correctly set for DDP
@@ -41,10 +51,12 @@ class Trainer:
         # Use AdamW as per original script
         self.optimizer = optim.AdamW(self.model.parameters(), lr=config['learning_rate'], weight_decay=config.get('weight_decay', 0.05))
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode="min", factor=0.1, patience=config.get('scheduler_patience', 2))
-        
-        self.checkpoint_dir = config['checkpoint_dir']
-        self.early_stopping = EarlyStopping(patience=config['patience'], verbose=True, path=os.path.join(self.checkpoint_dir, "videomae_v2_best.pt"))
-        self.checkpoint_path = os.path.join(self.checkpoint_dir, "videomae_v2_checkpoint_last.pt") 
+
+        # --- Checkpoint paths now use output_dir ---
+        self.best_checkpoint_save_path = os.path.join(self.output_dir, "videomae_v2_best.pt")
+        self.last_checkpoint_save_path = os.path.join(self.output_dir, "videomae_v2_checkpoint_last.pt")
+        self.early_stopping = EarlyStopping(patience=config['patience'], verbose=True, path=self.best_checkpoint_save_path) # Use new path
+
 
         if self.rank == 0:
             wandb_project = config.get("wandb_project", "volleyball_group_activity")
@@ -121,32 +133,40 @@ class Trainer:
         }
         return avg_loss, metrics
 
+    # Modify the resume logic to require resume_path
     def train(self):
         start_epoch = 0
-        # Load checkpoint if resuming
-        if self.resume and os.path.exists(self.checkpoint_path):
-            # Map location based on current device
-            map_location = self.device
-            checkpoint = torch.load(self.checkpoint_path, map_location=map_location)
-            
-            # Adjust loading for DDP model state_dict if necessary
-            model_state_dict = checkpoint['model_state_dict']
-            if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
-                 # Load onto the underlying model directly
-                 self.model.module.load_state_dict(model_state_dict)
-            else:
-                 self.model.load_state_dict(model_state_dict)
+        # Load checkpoint if resuming AND resume_path is provided
+        if self.resume:
+            if self.resume_path: # Check if a specific path is given
+                if os.path.exists(self.resume_path):
+                    # Map location based on current device
+                    map_location = self.device
+                    checkpoint = torch.load(self.resume_path, map_location=map_location)
 
-            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-            start_epoch = checkpoint['epoch'] + 1
-            # Restore early stopping state
-            self.early_stopping.best_score = checkpoint.get('early_stopping_best_score', None)
-            self.early_stopping.counter = checkpoint.get('early_stopping_counter', 0)
-            self.early_stopping.val_loss_min = checkpoint.get('early_stopping_val_loss_min', float('inf'))
-            if self.rank == 0:
-                print(f"Resuming training from epoch {start_epoch}")
-        elif self.rank == 0:
+                    model_state_dict = checkpoint['model_state_dict']
+                    if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
+                         # Load onto the underlying model directly
+                         self.model.module.load_state_dict(model_state_dict)
+                    else:
+                         self.model.load_state_dict(model_state_dict)
+
+                    self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                    self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                    start_epoch = checkpoint['epoch'] + 1
+                    # Restore early stopping state
+                    self.early_stopping.best_score = checkpoint.get('early_stopping_best_score', None)
+                    self.early_stopping.counter = checkpoint.get('early_stopping_counter', 0)
+                    self.early_stopping.val_loss_min = checkpoint.get('early_stopping_val_loss_min', float('inf'))
+
+                    if self.rank == 0:
+                        print(f"Resuming training from checkpoint: {self.resume_path}")
+                        print(f"Resuming from epoch {start_epoch}")
+                elif self.rank == 0: # Checkpoint file not found
+                    print(f"Warning: Resume requested, but specified checkpoint '{self.resume_path}' not found. Starting training from scratch.")
+            elif self.rank == 0: # Resume flag set, but no path provided
+                print("Warning: Resume flag is set, but no --resume_path was provided. Starting training from scratch.")
+        elif self.rank == 0: # Not resuming
             print("Starting training from scratch")
 
         for epoch in range(start_epoch, self.config['num_epochs']):
@@ -199,9 +219,9 @@ class Trainer:
                     'early_stopping_best_score': self.early_stopping.best_score,
                     'early_stopping_counter': self.early_stopping.counter,
                     'early_stopping_val_loss_min': self.early_stopping.val_loss_min,
-                }, self.checkpoint_path)
+                }, self.last_checkpoint_save_path) # Use new save path
 
-                # Early stopping check (pass the underlying model if DDP)
+                # Early stopping check (uses best_checkpoint_save_path internally)
                 model_to_check = self.model.module if isinstance(self.model, torch.nn.parallel.DistributedDataParallel) else self.model
                 self.early_stopping(val_loss, model_to_check, self.device)
                 if self.early_stopping.early_stop:
@@ -217,19 +237,24 @@ class Trainer:
             wandb.finish()
 
 
+# Add output_dir argument, remove default checkpoint_dir logic
 def main():
     parser = argparse.ArgumentParser(description="Train VideoMAE V2 for Volleyball Group Activity Recognition")
     parser.add_argument("--config", type=str, default="config/config_videomae.yaml", help="Path to config file")
-    parser.add_argument("--resume", action="store_true", help="Resume training from the last checkpoint")
+    parser.add_argument("--resume", action="store_true", help="Resume training from the checkpoint specified by --resume_path")
+    parser.add_argument("--resume_path", type=str, default=None, help="Path to specific checkpoint file to resume from (required if --resume is set).")
+    parser.add_argument("--output_dir", type=str, required=True, help="Directory to save checkpoints and logs.") # New required argument
     args = parser.parse_args()
 
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
 
-    # Ensure checkpoint directory exists
-    checkpoint_dir = config.get("checkpoint_dir", get_checkpoint_dir())
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    config['checkpoint_dir'] = checkpoint_dir # Store resolved path back into config
+    # --- Remove old checkpoint_dir logic ---
+    # checkpoint_dir = config.get("checkpoint_dir", get_checkpoint_dir())
+    # os.makedirs(checkpoint_dir, exist_ok=True)
+    # config['checkpoint_dir'] = checkpoint_dir # Store resolved path back into config
+    # --- Use output_dir directly ---
+    config['output_dir'] = args.output_dir # Store output dir in config if needed elsewhere
 
     # Distributed setup
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
@@ -316,8 +341,13 @@ def main():
         model_name=videomae_v2_model_name
     )
 
-    # Trainer Initialization and Training
-    trainer = Trainer(config, model, train_loader, val_loader, test_loader, device, resume=args.resume)
+    # Pass the new arguments to Trainer
+    trainer = Trainer(
+        config, model, train_loader, val_loader, test_loader, device,
+        resume=args.resume,
+        resume_path=args.resume_path,
+        output_dir=args.output_dir # Pass output_dir
+    )
     trainer.train()
 
     # Cleanup distributed process group
