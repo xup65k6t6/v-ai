@@ -20,7 +20,7 @@ setup(
     description='AI system for automatic volleyball activity recognition and scoring event detection',
     long_description=long_description,
     long_description_content_type='text/markdown',
-    url='https://github.com/yourusername/v-ai',
+    url='https://github.com/xup65k6t6/v-ai',
     packages=find_packages(),
     classifiers=[
         'Development Status :: 3 - Alpha',

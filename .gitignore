@@ -144,8 +144,7 @@ checkpoints/
 *.pt
 *.pth
 *.pkl
-data/videos/
-data/inference_output/
+data/**
 temp_demo_input/
 temp_demo_output/
 demo_output_*.mp4

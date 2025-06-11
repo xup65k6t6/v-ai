@@ -12,7 +12,7 @@ Get up and running with volleyball activity recognition in 5 minutes!
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/v-ai.git
+git clone https://github.com/xup65k6t6/v-ai.git
 cd v-ai
 
 # Create virtual environment (recommended)
@@ -136,7 +136,7 @@ python v_ai/inference_3dcnn.py \
 ## Need Help?
 
 - Check the [full documentation](README.md)
-- Open an [issue](https://github.com/yourusername/v-ai/issues)
+- Open an [issue](https://github.com/xup65k6t6/v-ai/issues)
 - Read the [contribution guide](CONTRIBUTING.md)
 
 Happy volleying! 🏐

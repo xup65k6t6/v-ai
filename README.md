@@ -12,13 +12,13 @@ An AI system for automatic volleyball activity recognition and scoring event det
 
 - **Automatic Activity Detection**: Identifies volleyball game activities including spikes, sets, passes, and scoring events
 - **3D CNN Architecture**: Uses ResNet3D-18 for spatiotemporal feature extraction
-- **Real-time Processing**: Efficient inference pipeline for video analysis
 - **Visual Annotations**: Outputs videos with activity labels overlaid
 - **Configurable Pipeline**: Easy-to-customize training and inference settings
 
 ## 📊 Supported Activities
 
 The model recognizes 8 different volleyball activities:
+
 - Waiting
 - Setting
 - Digging
@@ -36,7 +36,7 @@ See our [Quick Start Guide](QUICK_START.md) for detailed setup instructions.
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/v-ai.git
+git clone https://github.com/xup65k6t6/v-ai.git
 cd v-ai
 
 # Install dependencies
@@ -54,6 +54,9 @@ python demo.py --video path/to/your/volleyball_video.mp4
 # Specify output location
 python demo.py --video input.mp4 --output results/annotated.mp4
 ```
+
+## Example Video
+
 
 ## 📂 Project Structure
 
@@ -103,6 +106,7 @@ python v_ai/train_3dcnn.py --config config/my_config.yaml --resume
 ### Monitor Training
 
 Training progress is logged to Weights & Biases. View metrics in real-time:
+
 - Loss curves
 - Accuracy, Precision, Recall, F1 scores
 - Learning rate scheduling
@@ -126,6 +130,7 @@ num_epochs: 50        # Total training epochs
 ## 📈 Model Performance
 
 The 3D CNN model achieves strong performance on volleyball activity recognition:
+
 - **Architecture**: ResNet3D-18 with temporal convolutions
 - **Input**: 8-frame sequences (configurable)
 - **Training time**: ~2-4 hours on a single GPU (dataset dependent)
@@ -147,6 +152,7 @@ python v_ai/inference_3dcnn.py \
 ### Custom Training
 
 For advanced training options:
+
 - Distributed training supported via PyTorch DDP
 - Custom data augmentations in `transforms.py`
 - Early stopping and learning rate scheduling
@@ -171,7 +177,7 @@ If you use this code in your research, please cite:
   title = {V-AI: Volleyball Activity Recognition},
   author = {Christopher Lin},
   year = {2024},
-  url = {https://github.com/yourusername/v-ai}
+  url = {https://github.com/xup65k6t6/v-ai}
 }
 ```
 

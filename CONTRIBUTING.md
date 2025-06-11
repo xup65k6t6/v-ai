@@ -5,7 +5,7 @@ Thank you for your interest in contributing to V-AI! This document provides guid
 ## 🚀 Getting Started
 
 1. Fork the repository
-2. Clone your fork: `git clone https://github.com/yourusername/v-ai.git`
+2. Clone your fork: `git clone https://github.com/xup65k6t6/v-ai.git`
 3. Create a new branch: `git checkout -b feature/your-feature-name`
 4. Install development dependencies: `pip install -e ".[dev]"`
 
