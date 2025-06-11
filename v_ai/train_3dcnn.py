@@ -1,4 +1,13 @@
-# v_ai/train_3dcnn.py
+"""
+3D CNN Training Script for Volleyball Activity Recognition
+
+This script trains a ResNet3D-18 model for volleyball activity classification.
+It supports distributed training, early stopping, and checkpoint resuming.
+
+Usage:
+    python v_ai/train_3dcnn.py --config config/config.yaml
+    python v_ai/train_3dcnn.py --config config/config.yaml --resume
+"""
 
 import argparse
 import os
@@ -19,6 +28,21 @@ from v_ai.utils.utils import get_device
 os.environ["WANDB_SILENT"] = "true"
 
 class Trainer:
+    """
+    Trainer class for 3D CNN model.
+    
+    Handles training loop, validation, checkpointing, and metrics logging.
+    Supports distributed training and automatic mixed precision.
+    
+    Args:
+        config (dict): Configuration dictionary containing training parameters
+        model (nn.Module): The 3D CNN model to train
+        train_loader (DataLoader): Training data loader
+        val_loader (DataLoader): Validation data loader
+        test_loader (DataLoader): Test data loader
+        device (torch.device): Device to run training on
+        resume (bool): Whether to resume from last checkpoint
+    """
     def __init__(self, config, model, train_loader, val_loader, test_loader, device, resume=False):
         self.config = config
         self.model = model.to(device)

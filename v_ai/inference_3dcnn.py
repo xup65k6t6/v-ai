@@ -1,17 +1,33 @@
-# v_ai/inference_3dcnn.py
+"""
+3D CNN Inference Script for Volleyball Activity Recognition
+
+This script performs inference on volleyball videos using a trained 3D CNN model.
+It processes videos in two passes:
+1. Prediction pass: Generates activity predictions for video clips
+2. Annotation pass: Overlays predictions on the original video
+
+Features:
+- Batch processing of multiple videos
+- Caching of predictions for faster re-runs
+- Confidence-based label display with hold duration
+- Progress bars for better user experience
+
+Usage:
+    python v_ai/inference_3dcnn.py --input_dir videos/ --output_dir results/
+"""
 
 import argparse
 import os
 import cv2
 import torch
 import yaml
-import pickle
+import pickle # nosec
 from collections import deque
-from tqdm import tqdm # For progress bars
+from tqdm import tqdm  # For progress bars
 
 from v_ai.data import GROUP_ACTIVITY_MAPPING
 from v_ai.models.model import Video3DClassificationModel
-from v_ai.transforms import resize_only # Use the same transform as training
+from v_ai.transforms import resize_only  # Use the same transform as training
 from v_ai.utils.utils import get_device
 
 # Reverse mapping for easy lookup of class names
@@ -86,7 +102,7 @@ def predict_clips(video_path, output_path, model, transform, config, device, str
     # If cached predictions exist, load and return them
     if os.path.exists(cache_file):
         with open(cache_file, 'rb') as f:
-            cached = pickle.load(f)
+            cached = pickle.load(f) # nosec
         print(f"Loaded cached predictions from {cache_file}")
         return cached['clip_predictions'], cached['frame_count'], cached['fps'], cached['width'], cached['height']
 
