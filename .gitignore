@@ -162,7 +162,7 @@ wandb/
 *.avi
 *.mov
 *.mkv
-!examples/*.mp4
+!examples/example_inference.mp4
 !examples/*.gif
 
 # Temporary files
