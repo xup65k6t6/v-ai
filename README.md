@@ -58,6 +58,10 @@ python demo.py --video input.mp4 --output results/annotated.mp4
 ## Example Video
 
 
+https://github.com/user-attachments/assets/94ce3df7-7f4b-4b00-9412-465d1ed2716f
+
+
+
 ## 📂 Project Structure
 
 ```
