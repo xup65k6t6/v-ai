@@ -33,7 +33,7 @@ class VideoMAEV2ClassificationModel(nn.Module):
     def forward(self, x):
         """
         Args:
-            x: Input tensor of shape [B, C, T, H, W]
+            x: Input tensor of shape [B, T, C, H, W]
         Returns:
             logits: Tensor of shape [B, num_classes]
         """

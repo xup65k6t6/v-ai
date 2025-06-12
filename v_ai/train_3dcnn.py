@@ -1,4 +1,13 @@
-# v_ai/train_3dcnn.py
+"""
+3D CNN Training Script for Volleyball Activity Recognition
+
+This script trains a ResNet3D-18 model for volleyball activity classification.
+It supports distributed training, early stopping, and checkpoint resuming.
+
+Usage:
+    python v_ai/train_3dcnn.py --config config/config.yaml
+    python v_ai/train_3dcnn.py --config config/config.yaml --resume
+"""
 
 import argparse
 import os
@@ -12,14 +21,29 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import yaml
 from v_ai.data import GROUP_ACTIVITY_MAPPING, SimplifiedGroupActivityDataset
 from v_ai.models.model import Video3DClassificationModel
-from v_ai.transforms import resize_only
+from v_ai.transforms import get_3dcnn_train_transforms, get_3dcnn_val_transforms
 from v_ai.utils.earlystopping import EarlyStopping
 from v_ai.utils.utils import get_device
 
 os.environ["WANDB_SILENT"] = "true"
 
 class Trainer:
-    def __init__(self, config, model, train_loader, val_loader, test_loader, device):
+    """
+    Trainer class for 3D CNN model.
+    
+    Handles training loop, validation, checkpointing, and metrics logging.
+    Supports distributed training and automatic mixed precision.
+    
+    Args:
+        config (dict): Configuration dictionary containing training parameters
+        model (nn.Module): The 3D CNN model to train
+        train_loader (DataLoader): Training data loader
+        val_loader (DataLoader): Validation data loader
+        test_loader (DataLoader): Test data loader
+        device (torch.device): Device to run training on
+        resume (bool): Whether to resume from last checkpoint
+    """
+    def __init__(self, config, model, train_loader, val_loader, test_loader, device, resume=False):
         self.config = config
         self.model = model.to(device)
         if dist.is_initialized():
@@ -32,6 +56,8 @@ class Trainer:
         self.optimizer = optim.Adam(self.model.parameters(), lr=config['learning_rate'])
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode="min", factor=0.1, patience=2)
         self.early_stopping = EarlyStopping(patience=config['patience'], verbose=True, path=os.path.join(config['checkpoint_dir'], "best_3dcnn.pt"))
+        self.checkpoint_path = os.path.join(config['checkpoint_dir'], "checkpoint_last.pt")
+        self.resume = resume
         self.rank = dist.get_rank() if dist.is_initialized() else 0
         if self.rank == 0:
             wandb.login(key=os.environ.get("WANDB_API_KEY"))
@@ -100,10 +126,29 @@ class Trainer:
         return avg_loss, metrics
 
     def train(self):
-        for epoch in range(self.config['num_epochs']):
+        # Check for existing checkpoint to resume training
+        start_epoch = 0
+        if self.resume and os.path.exists(self.checkpoint_path):
+            # TODO: load checkpoint_path from separate variable in config or argument. It is possible the last checkpoint is not accessible from config[checkpoint_dir]
+            checkpoint = torch.load(self.checkpoint_path, map_location=self.device)
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            start_epoch = checkpoint['epoch'] + 1
+            self.early_stopping.best_score = checkpoint.get('early_stopping_best_score', None)
+            self.early_stopping.counter = checkpoint.get('early_stopping_counter', 0)
+            self.early_stopping.val_loss_min = checkpoint.get('early_stopping_val_loss_min', float('inf'))
+            if self.rank == 0:
+                print(f"Resuming training from epoch {start_epoch + 1}")
+        else:
+            if self.rank == 0:
+                print("Starting training from scratch")
+
+        for epoch in range(start_epoch, self.config['num_epochs']):
             if hasattr(self.train_loader, 'sampler') and isinstance(self.train_loader.sampler, DistributedSampler):
-                self.train_loader.sampler.set_epoch(epoch) # Shuffle sampler for distributed training
-            print(f"Epoch {epoch+1}/{self.config['num_epochs']}")
+                self.train_loader.sampler.set_epoch(epoch)
+            if self.rank == 0:
+                print(f"Epoch {epoch+1}/{self.config['num_epochs']}")
             train_loss, train_metrics = self.train_epoch()
             val_loss, val_metrics = self.validate_epoch()
             if self.rank == 0:
@@ -126,13 +171,16 @@ class Trainer:
                     f"Acc = {val_metrics['accuracy']:.4f}, Prec = {val_metrics['precision']:.4f}, "
                     f"Recall = {val_metrics['recall']:.4f}, F1 = {val_metrics['f1']:.4f}"
                 )
-                # torch.save({
-                #     "epoch": epoch,
-                #     "model_state_dict": self.model.state_dict(),
-                #     "optimizer_state_dict": self.optimizer.state_dict(),
-                #     "scheduler_state_dict": self.scheduler.state_dict(),
-                #     "val_loss": val_loss,
-                # }, os.path.join(self.config['checkpoint_dir'], "checkpoint_last.pt"))
+                torch.save({
+                    "epoch": epoch,
+                    "model_state_dict": self.model.state_dict(),
+                    "optimizer_state_dict": self.optimizer.state_dict(),
+                    "scheduler_state_dict": self.scheduler.state_dict(),
+                    "val_loss": val_loss,
+                    'early_stopping_best_score': self.early_stopping.best_score,
+                    'early_stopping_counter': self.early_stopping.counter,
+                    'early_stopping_val_loss_min': self.early_stopping.val_loss_min,
+                }, self.checkpoint_path)
                 self.early_stopping(val_loss, self.model, self.device)
                 if self.early_stopping.early_stop:
                     print("Early stopping triggered.")
@@ -144,11 +192,13 @@ class Trainer:
 def main():
     parser = argparse.ArgumentParser(description="Train 3D CNN for Group Activity Recognition")
     parser.add_argument("--config", type=str, default="config/config.yaml", help="Path to the YAML config file")
+    parser.add_argument("--resume", action="store_true", help="Resume training from the last checkpoint")
     args = parser.parse_args()
 
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
-
+    os.makedirs(config['checkpoint_dir'], exist_ok=True)
+    
     # Distributed setup
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         backend = 'nccl' if torch.cuda.is_available() else 'gloo'
@@ -165,17 +215,19 @@ def main():
     test_ids = config.get("test_ids", [4, 5, 9, 11, 14, 20, 21, 25, 29, 34, 35, 37, 43, 44, 45, 47])
 
     # Dataset and DataLoader setup
-    transform = resize_only(image_size=config['image_size'])
+    train_transform = get_3dcnn_train_transforms(image_size=config['image_size'])
+    val_transform = get_3dcnn_val_transforms(image_size=config['image_size'])
+
     train_dataset = SimplifiedGroupActivityDataset(
-        config['samples_base'], video_ids=train_ids, transform=transform,
+        config['samples_base'], video_ids=train_ids, transform=train_transform,
         window_before=config['window_before'], window_after=config['window_after']
     )
     val_dataset = SimplifiedGroupActivityDataset(
-        config['samples_base'], video_ids=val_ids, transform=transform,
+        config['samples_base'], video_ids=val_ids, transform=val_transform,
         window_before=config['window_before'], window_after=config['window_after']
     )
     test_dataset = SimplifiedGroupActivityDataset(
-        config['samples_base'], video_ids=test_ids, transform=transform,
+        config['samples_base'], video_ids=test_ids, transform=val_transform, # Use val_transform for test set too
         window_before=config['window_before'], window_after=config['window_after']
     )
 
@@ -200,7 +252,7 @@ def main():
     model = Video3DClassificationModel(num_classes=len(GROUP_ACTIVITY_MAPPING), pretrained=config['pretrained'])
 
     # Trainer initialization and training
-    trainer = Trainer(config, model, train_loader, val_loader, test_loader, device)
+    trainer = Trainer(config, model, train_loader, val_loader, test_loader, device, resume=args.resume)
     trainer.train()
 
     # Cleanup
